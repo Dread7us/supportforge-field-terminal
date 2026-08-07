@@ -7,6 +7,9 @@
 #include <esp_system.h>
 
 #include "board_profile.h"
+#include "input/touch_controller.h"
+#include "ui/ui_components.h"
+#include "ui/ui_controller.h"
 
 namespace {
 
@@ -16,9 +19,6 @@ HardwareSerial gpsSerial(1);
 
 bool sharedRailEnabled = false;
 bool radioListening = false;
-bool displayInitialized = false;
-bool displayRefreshCompleted = false;
-EpdiyHighlevelState displayState;
 bool touchObserved = false;
 bool rtcObserved = false;
 bool chargerObserved = false;
@@ -30,6 +30,58 @@ bool gpsFixObserved = false;
 bool radioObserved = false;
 
 constexpr const char *kFirmwareId = "h752_02_candidate qualification-v2";
+ui::UiController uiController;
+input::TouchController touchController;
+
+ui::Presence presence(bool observed) {
+  return observed ? ui::Presence::Observed : ui::Presence::Unknown;
+}
+
+uint8_t fromBcd(uint8_t value) { return (value >> 4) * 10 + (value & 0x0F); }
+
+void readRtc(ui::UiSnapshot& state) {
+  if (!rtcObserved) return;
+  Wire.beginTransmission(0x51);
+  Wire.write(0x02);
+  if (Wire.endTransmission(false) != 0 || Wire.requestFrom(0x51, 7) != 7) return;
+  const uint8_t second = Wire.read();
+  const uint8_t minute = Wire.read();
+  const uint8_t hour = Wire.read();
+  const uint8_t day = Wire.read();
+  Wire.read();  // weekday
+  const uint8_t month = Wire.read();
+  const uint8_t year = Wire.read();
+  if (second & 0x80) return;  // PCF8563 voltage-low flag: time is not trustworthy.
+  state.minute = fromBcd(minute & 0x7F);
+  state.hour = fromBcd(hour & 0x3F);
+  state.day = fromBcd(day & 0x3F);
+  state.month = fromBcd(month & 0x1F);
+  state.year = 2000 + fromBcd(year);
+  state.rtcValid = state.hour < 24 && state.minute < 60 && state.day > 0 &&
+                   state.day <= 31 && state.month > 0 && state.month <= 12;
+}
+
+ui::UiSnapshot makeUiSnapshot() {
+  ui::UiSnapshot state;
+  state.touch = presence(touchObserved);
+  state.rtc = presence(rtcObserved);
+  state.fuelGauge = presence(gaugeObserved);
+  state.storage = presence(sdObserved);
+  state.gps = presence(gpsObserved);
+  state.gpsFix = gpsFixObserved;
+  state.radio = presence(radioObserved);
+  state.radioListening = radioListening;
+  state.sharedRailEnabled = sharedRailEnabled;
+  state.touchMappingVerified = touchController.mappingVerified();
+  state.psramAvailable = ESP.getPsramSize() > 0;
+  state.firmwareId = "FIELD UI 1";
+  state.buildDate = __DATE__;
+  state.buildTime = __TIME__;
+  readRtc(state);
+  return state;
+}
+
+void syncUiState() { uiController.setSnapshot(makeUiSnapshot()); }
 
 const char *resetReasonName(esp_reset_reason_t reason) {
   switch (reason) {
@@ -91,7 +143,7 @@ void printProfile() {
   } else {
     Serial.println("GPS: unavailable in this comparison profile; no pins guessed");
   }
-  Serial.println("Boot policy: no rail enable, RF transmit, GPS TX, or EPD power-on.");
+  Serial.println("Boot policy: no rail enable, RF transmit, or GPS TX; one GC16 HOME render.");
 }
 
 void printHelp() {
@@ -104,7 +156,11 @@ void printHelp() {
   Serial.println("  lora rx       - receive-only mode at 915 MHz");
   Serial.println("  lora stop     - put radio to sleep");
   Serial.println("  gps listen    - RX-only 9600-baud NMEA observation for 15 seconds");
-  Serial.println("  display test  - one conservative black/white pattern, then power off");
+  Serial.println("  display test  - render HOME with GC16, then power off");
+  Serial.println("  display clear - guarded boot-recovery full-clear plus HOME render");
+  Serial.println("  page <name>   - HOME/SYSTEMS/RADIO/LOCATION/DEVICE/DIAGNOSTICS");
+  Serial.println("  touch corners - non-destructive four-corner mapping qualification");
+  Serial.println("  touch test    - one redacted coordinate observation");
   Serial.println("  help");
 }
 
@@ -241,7 +297,6 @@ void startGpsObservation() {
   size_t lines = 0;
   bool nmea = false;
   bool validFix = false;
-  String sample;
   String line;
   while (static_cast<int32_t>(deadline - millis()) > 0) {
     while (gpsSerial.available()) {
@@ -250,7 +305,6 @@ void startGpsObservation() {
       if (c == '\n') ++lines;
       if (c == '\n') {
         if (line.startsWith("$GP") || line.startsWith("$GN")) nmea = true;
-        const int comma = line.indexOf(',');
         if (line.indexOf("GGA") > 0) {
           int field = 0;
           for (int i = 0; i < line.length(); ++i) {
@@ -259,7 +313,6 @@ void startGpsObservation() {
         }
         line = "";
       } else if (line.length() < 120) line += c;
-      if (sample.length() < 160 && c >= 0x20 && c <= 0x7E) sample += c;
     }
     delay(2);
   }
@@ -267,75 +320,18 @@ void startGpsObservation() {
   gpsObserved = nmea;
   gpsFixObserved = validFix;
   printResult("l76k", !bytes ? "NOT_PRESENT" : (validFix ? "PASS" : (nmea ? "NO_FIX" : "OBSERVED")),
-              String(bytes) + " bytes, " + String(lines) + " lines, sample=" + sample);
+              String(bytes) + " bytes, " + String(lines) +
+              " lines; NMEA payload and coordinates redacted");
+  syncUiState();
 }
-
-const uint8_t kFont[][5] = {
-  {0,0,0,0,0},{0x3E,0x51,0x49,0x45,0x3E},{0x00,0x42,0x7F,0x40,0x00},{0x42,0x61,0x51,0x49,0x46},
-  {0x21,0x41,0x45,0x4B,0x31},{0x18,0x14,0x12,0x7F,0x10},{0x27,0x45,0x45,0x45,0x39},{0x3C,0x4A,0x49,0x49,0x30},{0x01,0x71,0x09,0x05,0x03},{0x36,0x49,0x49,0x49,0x36},{0x06,0x49,0x49,0x29,0x1E},
-  {0x7E,0x11,0x11,0x11,0x7E},{0x7F,0x49,0x49,0x49,0x36},{0x3E,0x41,0x41,0x41,0x22},{0x7F,0x41,0x41,0x22,0x1C},{0x7F,0x49,0x49,0x49,0x41},{0x7F,0x09,0x09,0x09,0x01},{0x3E,0x41,0x49,0x49,0x7A},{0x7F,0x08,0x08,0x08,0x7F},{0x00,0x41,0x7F,0x41,0x00},{0x20,0x40,0x41,0x3F,0x01},{0x7F,0x08,0x14,0x22,0x41},{0x7F,0x40,0x40,0x40,0x40},{0x7F,0x02,0x0C,0x02,0x7F},{0x7F,0x04,0x08,0x10,0x7F},{0x3E,0x41,0x41,0x41,0x3E},{0x7F,0x09,0x09,0x09,0x06},{0x3E,0x41,0x51,0x21,0x5E},{0x7F,0x09,0x19,0x29,0x46},{0x46,0x49,0x49,0x49,0x31},{0x01,0x01,0x7F,0x01,0x01},{0x3F,0x40,0x40,0x40,0x3F},{0x1F,0x20,0x40,0x20,0x1F},{0x3F,0x40,0x38,0x40,0x3F},{0x63,0x14,0x08,0x14,0x63},{0x07,0x08,0x70,0x08,0x07},{0x61,0x51,0x49,0x45,0x43}
-};
-
-void drawText(uint8_t *fb, int x, int y, const String &text, int scale = 2) {
-  for (char raw : text) {
-    char c = raw >= 'a' && raw <= 'z' ? raw - 32 : raw;
-    int index = c == ' ' ? 0 : (c >= '0' && c <= '9' ? 1 + c - '0' : (c >= 'A' && c <= 'Z' ? 11 + c - 'A' : 0));
-    for (int col = 0; col < 5; ++col) for (int row = 0; row < 7; ++row)
-      if (kFont[index][col] & (1 << row)) epd_fill_rect({x + col * scale, y + row * scale, scale, scale}, 0, fb);
-    x += 6 * scale;
-  }
-}
-
-void testDisplay() {
+void testDisplay(bool bootRecovery = false) {
 #if defined(HQ_PROFILE_LEGACY_H752)
   printResult("display", "BLOCKED",
               "epd_board_v7 belongs to current Pro baseline, not legacy H752");
 #else
-  if (displayRefreshCompleted) {
-    printResult("display", "LOCKED", "one-shot GC16 refresh already completed");
-    return;
-  }
-  Serial.println("Display test: initializing official current-Pro epd_board_v7 candidate.");
-  if (!displayInitialized) {
-    epd_init(&epd_board_v7, &ED047TC1, EPD_LUT_64K);
-    epd_set_vcom(1560);  // Official display_test baseline; do not tune blindly.
-    displayState = epd_hl_init(EPD_BUILTIN_WAVEFORM);
-    epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
-    displayInitialized = true;
-  }
-  uint8_t *framebuffer = epd_hl_get_framebuffer(&displayState);
-  if (!framebuffer) {
-    printResult("display", "FAILED", "framebuffer allocation failed");
-    return;
-  }
-  Serial.println("DISPLAY clear=FULLCLEAR_GC16_PLUS_FLASH rotation=INVERTED_PORTRAIT power=ON");
-  epd_poweron();
-  // The panel starts with an unknown physical image. Use the LILYGO-derived
-  // epdiy full-clear sequence before composing the final static framebuffer.
-  epd_fullclear(&displayState, epd_ambient_temperature());
-  epd_hl_set_all_white(&displayState);
-  drawText(framebuffer, 25, 35, "supportFORGE FIELD TERMINAL", 2);
-  drawText(framebuffer, 25, 75, "H752-02 QUALIFICATION", 2);
-  drawText(framebuffer, 25, 145, String("MCU PSRAM: ") + (ESP.getPsramSize() ? "PASS" : "FAIL"));
-  drawText(framebuffer, 25, 195, String("TOUCH: ") + (touchObserved ? "PASS" : "NOT PRESENT"));
-  drawText(framebuffer, 25, 245, String("RTC: ") + (rtcObserved ? "PASS PCF8563" : "NOT PRESENT"));
-  drawText(framebuffer, 25, 295, String("BATTERY: ") + ((chargerObserved && gaugeObserved) ? "PASS" : "UNVERIFIED"));
-  drawText(framebuffer, 25, 345, String("SD: ") + (sdObserved ? "PASS" : "NOT PRESENT"));
-  drawText(framebuffer, 25, 395, String("GPS: ") + (gpsFixObserved ? "PASS" : (gpsObserved ? "NO FIX" : "NOT PRESENT")));
-  drawText(framebuffer, 25, 445, String("SX1262 RX ONLY: ") + (radioObserved ? "PASS" : "UNVERIFIED"));
-  drawText(framebuffer, 25, 535, "LORA TX LOCKED", 3);
-  drawText(framebuffer, 25, 625, "H752 02 CANDIDATE");
-  drawText(framebuffer, 25, 665, "QUALIFICATION V2");
-  drawText(framebuffer, 25, 725, String(__DATE__));
-  drawText(framebuffer, 25, 765, String(__TIME__));
-  Serial.println("DISPLAY render=GC16 count=1 rotation=INVERTED_PORTRAIT");
-  const EpdDrawError result =
-      epd_hl_update_screen(&displayState, MODE_GC16, epd_ambient_temperature());
-  epd_poweroff();
-  displayRefreshCompleted = true;
-  Serial.println("DISPLAY power=OFF high_voltage=SHUT_DOWN");
-  printResult("display", result == EPD_DRAW_SUCCESS ? "COMMAND_ACCEPTED" : "FAILED",
-              "one portrait GC16 full refresh; physical result required; draw code " + String(result));
+  const bool rendered = uiController.renderIfDirty(millis(), bootRecovery);
+  printResult("display", rendered ? "COMMAND_ACCEPTED" : "NO_CHANGE",
+              "portrait GC16 retained page; high voltage off after update");
 #endif
 }
 
@@ -350,18 +346,9 @@ void testTouch() {
       uint8_t status = Wire.read(); uint8_t xl = Wire.read(); uint8_t xh = Wire.read(); uint8_t yl = Wire.read(); uint8_t yh = Wire.read();
       if ((status & 0x80) && (status & 0x0F)) {
         const int rawX = xl | (xh << 8), rawY = yl | (yh << 8);
-        // EPD_ROT_INVERTED_PORTRAIT maps logical (x,y) to physical
-        // (y, 539-x), so the inverse is logical (539-rawY, rawX). Keep raw
-        // values in the evidence because GT911 mounting is physical and must
-        // be confirmed by touches at known screen positions.
-        const int portraitX = 539 - rawY;
-        const int portraitY = rawX;
-        const bool inRange = portraitX >= 0 && portraitX < 540 &&
-                             portraitY >= 0 && portraitY < 960;
-        printResult("touch", inRange ? "PASS" : "OBSERVED",
-                    "raw x=" + String(rawX) + " y=" + String(rawY) +
-                    "; portrait x=" + String(portraitX) +
-                    " y=" + String(portraitY));
+        input::transformInvertedPortrait(rawX, rawY);
+        printResult("touch", "OBSERVED",
+                    "coordinate captured and clamped; values redacted; run 'touch corners' to qualify mapping");
         Wire.beginTransmission(address); Wire.write(0x81); Wire.write(0x4E); Wire.write(0); Wire.endTransmission();
         return;
       }
@@ -369,6 +356,23 @@ void testTouch() {
     delay(20);
   }
   printResult("touch", "UNVERIFIED", "controller present; no coordinate observed");
+}
+
+bool requestNamedPage(const String& name) {
+  ui::Page page;
+  if (name == "home") page = ui::Page::Home;
+  else if (name == "systems") page = ui::Page::Systems;
+  else if (name == "radio") page = ui::Page::Radio;
+  else if (name == "location") page = ui::Page::Location;
+  else if (name == "device") page = ui::Page::Device;
+  else if (name == "diagnostics") page = ui::Page::Diagnostics;
+  else return false;
+  if (!uiController.requestPage(page, millis())) {
+    printResult("ui", "RATE_LIMITED", "page unchanged or refresh cooldown active");
+    return true;
+  }
+  testDisplay();
+  return true;
 }
 
 void processCommand(String command) {
@@ -387,8 +391,11 @@ void processCommand(String command) {
     radioListening = false;
     printResult("sx1262", "STOPPED", "radio sleep requested");
   } else if (command == "gps listen") startGpsObservation();
-  else if (command == "display test") testDisplay();
+  else if (command == "display test") { syncUiState(); testDisplay(); }
+  else if (command == "display clear") { syncUiState(); testDisplay(true); }
   else if (command == "touch test") testTouch();
+  else if (command == "touch corners") { touchController.runFourCornerTest(); syncUiState(); }
+  else if (command.startsWith("page ") && requestNamedPage(command.substring(5))) {}
   else if (command == "help" || command.isEmpty()) printHelp();
   else Serial.println("Unknown command. Type 'help'.");
 }
@@ -420,11 +427,30 @@ void setup() {
   const uint32_t psramBytes = ESP.getPsramSize();
   printResult("psram", psramBytes ? "OBSERVED" : "NOT_OBSERVED",
               String(psramBytes) + " bytes reported by runtime");
+  identifyI2c();
+  touchController.begin();
+  syncUiState();
+  if (uiController.begin()) testDisplay(false);
+  else printResult("display", "FAILED", "UI framebuffer initialization failed");
   printHelp();
 }
 
 void loop() {
   if (Serial.available()) processCommand(Serial.readStringUntil('\n'));
+  const input::Tap tap = touchController.poll(millis());
+  if (tap.accepted) {
+    ui::Page destination = uiController.page();
+    if (ui::kNavBounds.contains(tap.point.x, tap.point.y)) {
+      const int index = tap.point.x / 108;
+      const ui::Page pages[] = {ui::Page::Home, ui::Page::Systems, ui::Page::Radio,
+                                ui::Page::Location, ui::Page::Device};
+      destination = pages[constrain(index, 0, 4)];
+    } else if (uiController.page() == ui::Page::Device &&
+               ui::Rect{24, 550, 492, 88}.contains(tap.point.x, tap.point.y)) {
+      destination = ui::Page::Diagnostics;
+    }
+    if (uiController.requestPage(destination, millis())) testDisplay();
+  }
   if (radioListening && digitalRead(hq::kBoard.loraIrq)) {
     String packet;
     const int state = radio.readData(packet);

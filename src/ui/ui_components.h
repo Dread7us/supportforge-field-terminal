@@ -1,0 +1,34 @@
+#pragma once
+
+#include <Arduino.h>
+#include <stdint.h>
+
+#include "ui_state.h"
+#include "ui_theme.h"
+
+namespace ui {
+
+enum class Icon : uint8_t { Home, Systems, Radio, Location, Device, Battery, Lock, Check, Info };
+
+void clear(uint8_t* fb);
+void roundedRect(uint8_t* fb, Rect rect, int radius, uint8_t fill, uint8_t stroke);
+void text(uint8_t* fb, int x, int y, const String& value, int scale = 2,
+          uint8_t color = kInk, int maxWidth = 0);
+int textWidth(const String& value, int scale = 2);
+void icon(uint8_t* fb, Icon value, int cx, int cy, int size, uint8_t color = kInk);
+void appBar(uint8_t* fb, const UiSnapshot& state, const char* section = nullptr);
+void card(uint8_t* fb, Rect bounds, const char* eyebrow, const String& title,
+          const String& body = "");
+void statusPill(uint8_t* fb, Rect bounds, const String& label, bool dark = false);
+void metricTile(uint8_t* fb, Rect bounds, Icon glyph, const char* label,
+                const String& value, const String& detail = "");
+void labeledRow(uint8_t* fb, Rect bounds, const char* label, const String& value,
+                bool divider = true);
+void emptyState(uint8_t* fb, Rect bounds, Icon glyph, const String& title,
+                const String& body);
+void dialog(uint8_t* fb, Rect bounds, const String& title, const String& body,
+            const String& actionLabel);
+void bottomNavigation(uint8_t* fb, Page selected);
+Rect navigationTarget(Page page);
+
+}  // namespace ui

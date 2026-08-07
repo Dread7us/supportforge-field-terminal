@@ -4,7 +4,7 @@
 
 - Product under test: **H752-02**, meaning 915 MHz SX1262 + GPS per LILYGO's
   product listing.
-- Firmware scope: safe, staged board qualification only.
+- Firmware scope: safe staged board qualification plus retained field UI shell.
 - Physical-device status at repository creation: **NOT TESTED / NOT REPORTED**.
 - No result below may be changed to PASS solely because compilation succeeds.
 
@@ -61,9 +61,15 @@ and current-Pro display tests rather than guessing.
 - `lora probe` uses 915 MHz, 10 dBm configuration, performs no transmit, then
   sleeps. `lora rx` is receive-only.
 - `gps listen` opens RX only (`TX = -1`) and sends no configuration commands.
-- `display test` is explicit, uses the official current-Pro `epd_board_v7` /
-  ED047TC1 baseline and its 1560 mV VCOM API value, performs one DU update, and
-  powers the panel off. Do not tune VCOM without panel evidence and measurement.
+- The UI uses the verified current-Pro `epd_board_v7` / ED047TC1 baseline,
+  inverted portrait rotation, the unchanged 1560 mV VCOM API value, and full
+  `MODE_GC16` updates. The complete page is composed before panel power-on and
+  high voltage is powered off after every update. Partial refresh is OFF.
+- Normal boot/page changes do not full-clear. `display clear` is an explicit,
+  once-per-boot LILYGO-derived cleanup operation for genuine recovery only.
+- GPS diagnostics redact NMEA payloads and coordinates by default.
+- Touch navigation stays locked until `touch corners` physically qualifies the
+  inverted-portrait transform at all four corners.
 - `lib/epdiy` is a trimmed, byte-for-byte snapshot of the official LILYGO
   repository's `H752-01:lib/epdiy` tree at revision
   `5067e1fd6a66cf8b06e0b484070dc1b405eac1aa`. Only non-build bulk directories
@@ -89,9 +95,9 @@ Fill this from captured serial output and direct observation. Do not infer.
 | L76K UART activity | `gps listen` | **UNREPORTED** | |
 | GPS valid outdoor fix | inspect NMEA | **UNREPORTED** | |
 | ED047TC1 display | `display test` + visual check | **UNREPORTED** | |
-| Touch | later staged probe after baseline | **NOT YET IMPLEMENTED** | |
+| Touch | `touch corners` | **LOGIC VERIFIED / PHYSICAL CHECK REQUIRED** | |
 | RTC / charger / gauge | I²C identity first | **UNREPORTED** | |
-| SD card | later staged read-only mount | **NOT YET IMPLEMENTED** | |
+| SD card | `sd test` read-only mount | **PHYSICAL CHECK REQUIRED** | |
 
 ## Reporting template
 
