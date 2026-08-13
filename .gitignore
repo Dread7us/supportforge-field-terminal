@@ -19,3 +19,7 @@ serial_capture*/
 *~
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc
+*.pyo
+artifacts/

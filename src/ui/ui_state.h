@@ -2,9 +2,25 @@
 
 #include <stdint.h>
 
+#include "telemetry/telemetry_model.h"
+#include "battery/battery_manager.h"
+#include "time/time_service.h"
+#include "weather/weather_manager.h"
+
 namespace ui {
 
-enum class Page : uint8_t { Home, Systems, Radio, Location, Device, Diagnostics };
+enum class Page : uint8_t {
+  Home,
+  Systems,
+  Radio,
+  Location,
+  Device,
+  Diagnostics,
+  DisplayCalibration,
+  TextQualification,
+  Settings,
+  TouchSetup
+};
 enum class Presence : uint8_t { Unknown, NotPresent, Observed };
 
 struct UiSnapshot {
@@ -27,11 +43,26 @@ struct UiSnapshot {
   bool radioListening = false;
   bool sharedRailEnabled = false;
   bool touchMappingVerified = false;
+  uint8_t touchSetupStep = 0;
+  bool touchSetupReady = false;
   bool psramAvailable = false;
+  bool batteryPercentAvailable = false;
+  uint8_t batteryPercent = 0;
+  battery::Classification batteryClassification = battery::Classification::NotPresent;
+  device_time::SyncState timeSyncState = device_time::SyncState::Unsynchronized;
+  bool use24Hour = true;
+  uint8_t timezoneIndex = 0;
+  time_t lastSuccessfulTimeSync = 0;
+  weather::Snapshot weather{};
+  telemetry::Snapshot telemetry{};
+  uint32_t nextPollSeconds = 0;
+  uint8_t systemsSection = 0;
   const char* firmwareId = "field-terminal-ui-1";
   const char* buildDate = "unknown";
   const char* buildTime = "unknown";
 };
+
+bool materiallyDifferent(const UiSnapshot& previous, const UiSnapshot& next);
 
 const char* pageName(Page page);
 

@@ -1,0 +1,47 @@
+{
+  "contract_version": 4,
+  "canvas": {"width": 540, "height": 960, "physical_width": 960, "physical_height": 540, "origin": "top-left", "rotation": "inverted-portrait"},
+  "framebuffer": {"bits_per_pixel": 4, "stride_bytes": 480, "white_nibble": 15, "black_nibble": 0},
+  "geometry": {
+    "margin": 24,
+    "grid": 8,
+    "app_bar_height": 104,
+    "nav_height": 96,
+    "content_bottom": 864,
+    "minimum_touch_target": 56,
+    "nav_item_width": 108,
+    "primary_content": [24, 120, 492, 728],
+    "device_diagnostics_action": [24, 550, 492, 88],
+    "device_touch_setup_action": [24,654,492,72],
+    "device_settings_action": [24,742,492,72],
+    "settings_timezone_action": [24,300,492,96],
+    "settings_format_action": [24,420,492,96],
+    "settings_sync_action": [24,650,492,96]
+  },
+  "palette": {"ink": 0, "ink_muted": 0, "rule": 0, "surface_strong": 255, "surface": 255, "surface_soft": 255, "paper": 255},
+  "font": {
+    "family": "Inter",
+    "source": "assets/fonts/Inter-SemiBold.ttf",
+    "license": "OFL-1.1",
+    "supported": "ASCII 32-126",
+    "roles": {"caption": 15, "body": 18, "card_heading": 22, "page_heading": 28, "brand": 32, "metric": 30, "navigation": 15}
+  },
+  "navigation": {
+    "labels": ["HOME", "SYSTEMS", "RADIO", "LOCATION", "DEVICE"],
+    "bounds": [[0,864,108,96],[108,864,108,96],[216,864,108,96],[324,864,108,96],[432,864,108,96]]
+  },
+    "touch": {"corner_x": 100, "corner_y": 120, "target_inset": 84, "target_radius": 44, "mapping_tolerance_x": 70, "mapping_tolerance_y": 100, "tap_slop": 24, "swipe_min": 88, "cross_axis_max": 64, "min_press_ms": 50, "max_press_ms": 1200, "clean_release_ms": 500, "transition_cooldown_ms": 500, "post_refresh_quiet_ms": 500},
+  "pages": {
+    "home": {
+      "cards": [[24,128,492,154],[24,306,238,112],[278,306,238,112],[24,434,238,112],[278,434,238,112],[24,562,492,252]],
+      "text": [[44,146,452,7,1,"TERMINAL STATUS"],[44,172,452,21,3,"SETUP REQUIRED"],[44,206,452,7,1,"CONNECT SUPPORTFORGE TO BEGIN MONITORING"],[40,327,206,7,1,"SYSTEMS"],[40,361,206,14,2,"NOT CONNECTED"],[294,327,206,7,1,"INCIDENTS"],[294,361,206,14,2,"--"]]
+    },
+    "systems": {"cards": [[24,144,492,326],[24,494,492,150]], "text": [[40,252,460,14,2,"NO SYSTEMS YET"],[44,512,452,7,1,"CONFIGURATION"],[44,538,452,21,3,"SETUP REQUIRED"]]},
+    "radio": {"cards": [[24,128,492,156],[24,308,492,246],[24,580,492,210]], "text": [[44,146,452,7,1,"SX1262 RADIO"],[44,172,452,21,3,"RECEIVE ONLY"],[44,206,452,7,1,"915 MHZ REGION - TRANSMISSION DISABLED"]]},
+    "location": {"cards": [[24,128,492,156],[24,310,492,246],[24,582,492,208]], "text": [[44,146,452,7,1,"L76K GNSS"],[44,172,452,21,3,"UNVERIFIED"],[44,206,452,7,1,"WAITING FOR QUALIFIED SATELLITE DATA"]]},
+    "device": {"cards": [[24,128,238,112],[278,128,238,112],[24,264,492,258],[24,550,492,88],[24,654,492,72],[24,742,492,72]], "text": [[88,570,390,14,2,"HARDWARE DIAGNOSTICS"],[88,602,390,7,1,"SAFE QUALIFICATION TOOLS AND OBSERVED STATE"],[88,672,390,14,2,"REPEAT TOUCH SETUP"]]},
+    "diagnostics": {"cards": [[24,170,492,438],[24,632,492,158]], "text": [[44,650,452,7,1,"GUARDED OPERATIONS"],[44,676,452,21,3,"SERIAL COMMANDS ONLY"]]},
+    "settings": {"cards": [[24,128,492,148],[24,300,492,96],[24,420,492,96],[24,540,492,86],[24,650,492,96]], "text": [[44,146,452,7,1,"DEVICE SETTINGS"],[44,174,452,21,3,"LOCAL TIME"],[44,318,452,14,2,"TIMEZONE"],[44,438,452,14,2,"CLOCK FORMAT"],[44,558,452,14,2,"LAST TIME SYNC"],[44,668,452,14,2,"SYNC STATUS"]]},
+    "touch_setup": {"cards": [[128,160,284,142],[128,688,284,84],[128,790,284,128]], "text": [[144,176,252,30,3,"TOUCH SETUP"],[144,218,252,24,2,"TAP EACH TARGET"],[144,256,252,24,2,"CORNER 1 OF 4"],[144,704,252,52,2,"UI QUAL 3"],[144,824,252,52,1,"TOUCH NAVIGATION UNLOCKS AFTER SETUP"]]}
+  }
+}

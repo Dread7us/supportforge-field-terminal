@@ -1,15 +1,27 @@
 #include <Arduino.h>
 #include <RadioLib.h>
+#include <Preferences.h>
 #include <SD.h>
 #include <SPI.h>
 #include <Wire.h>
 #include <epdiy.h>
 #include <esp_system.h>
+#include <WiFi.h>
 
 #include "board_profile.h"
+#include "app_config.h"
 #include "input/touch_controller.h"
+#include "battery/battery_manager.h"
+#include "telemetry/telemetry_manager.h"
+#include "time/time_service.h"
 #include "ui/ui_components.h"
 #include "ui/ui_controller.h"
+#include "weather/weather_manager.h"
+
+// UiSnapshot intentionally contains bounded Guardian, weather, time, and
+// hardware state. Give Arduino's loop task enough stack for those value
+// snapshots and rendering call frames; the framework default is 8192 bytes.
+SET_LOOP_TASK_STACK_SIZE(16384);
 
 namespace {
 
@@ -29,36 +41,24 @@ bool gpsObserved = false;
 bool gpsFixObserved = false;
 bool radioObserved = false;
 
-constexpr const char *kFirmwareId = "h752_02_candidate qualification-v2";
+constexpr const char *kFirmwareId = "UI QUAL 3";
+constexpr uint32_t kDisplayCleanupRevision = 6;
+Preferences bootPreferences;
+bool bootCleanupPending = false;
 ui::UiController uiController;
 input::TouchController touchController;
+telemetry::TelemetryManager telemetryManager;
+battery::BatteryManager batteryManager;
+device_time::TimeService timeService;
+weather::WeatherManager weatherManager;
+uint8_t systemsSection = 0;
+uint32_t observedTelemetryVersion = 0;
+uint32_t observedTimeVersion = 0;
+uint32_t observedWeatherVersion = 0;
+uint32_t observedBatteryVersion = 0;
 
 ui::Presence presence(bool observed) {
   return observed ? ui::Presence::Observed : ui::Presence::Unknown;
-}
-
-uint8_t fromBcd(uint8_t value) { return (value >> 4) * 10 + (value & 0x0F); }
-
-void readRtc(ui::UiSnapshot& state) {
-  if (!rtcObserved) return;
-  Wire.beginTransmission(0x51);
-  Wire.write(0x02);
-  if (Wire.endTransmission(false) != 0 || Wire.requestFrom(0x51, 7) != 7) return;
-  const uint8_t second = Wire.read();
-  const uint8_t minute = Wire.read();
-  const uint8_t hour = Wire.read();
-  const uint8_t day = Wire.read();
-  Wire.read();  // weekday
-  const uint8_t month = Wire.read();
-  const uint8_t year = Wire.read();
-  if (second & 0x80) return;  // PCF8563 voltage-low flag: time is not trustworthy.
-  state.minute = fromBcd(minute & 0x7F);
-  state.hour = fromBcd(hour & 0x3F);
-  state.day = fromBcd(day & 0x3F);
-  state.month = fromBcd(month & 0x1F);
-  state.year = 2000 + fromBcd(year);
-  state.rtcValid = state.hour < 24 && state.minute < 60 && state.day > 0 &&
-                   state.day <= 31 && state.month > 0 && state.month <= 12;
 }
 
 ui::UiSnapshot makeUiSnapshot() {
@@ -73,11 +73,32 @@ ui::UiSnapshot makeUiSnapshot() {
   state.radioListening = radioListening;
   state.sharedRailEnabled = sharedRailEnabled;
   state.touchMappingVerified = touchController.mappingVerified();
+  state.touchSetupStep = touchController.qualificationStep();
+  state.touchSetupReady = touchController.mappingVerified() && !touchController.qualifying();
   state.psramAvailable = ESP.getPsramSize() > 0;
-  state.firmwareId = "FIELD UI 1";
+  const battery::Snapshot battery = batteryManager.snapshot();
+  state.batteryClassification = battery.classification;
+  state.batteryPercentAvailable = battery.percentAvailable;
+  state.batteryPercent = battery.percent;
+  const device_time::Snapshot clock = timeService.snapshot();
+  state.rtcValid = clock.valid;
+  state.hour = clock.hour;
+  state.minute = clock.minute;
+  state.day = clock.day;
+  state.month = clock.month;
+  state.year = clock.year;
+  state.timeSyncState = clock.syncState;
+  state.use24Hour = clock.use24Hour;
+  state.timezoneIndex = clock.timezoneIndex;
+  state.lastSuccessfulTimeSync = clock.lastSuccessfulSync;
+  state.weather = weatherManager.snapshot();
+  state.configured = appconfig::configured();
+  state.telemetry = telemetryManager.snapshot();
+  state.nextPollSeconds = telemetryManager.nextPollInSeconds(millis());
+  state.systemsSection = systemsSection;
+  state.firmwareId = kFirmwareId;
   state.buildDate = __DATE__;
   state.buildTime = __TIME__;
-  readRtc(state);
   return state;
 }
 
@@ -143,7 +164,7 @@ void printProfile() {
   } else {
     Serial.println("GPS: unavailable in this comparison profile; no pins guessed");
   }
-  Serial.println("Boot policy: no rail enable, RF transmit, or GPS TX; one GC16 HOME render.");
+  Serial.println("Boot policy: no rail enable, RF transmit, or GPS TX; one initial GC16 page render.");
 }
 
 void printHelp() {
@@ -157,10 +178,12 @@ void printHelp() {
   Serial.println("  lora stop     - put radio to sleep");
   Serial.println("  gps listen    - RX-only 9600-baud NMEA observation for 15 seconds");
   Serial.println("  display test  - render HOME with GC16, then power off");
-  Serial.println("  display clear - guarded boot-recovery full-clear plus HOME render");
-  Serial.println("  page <name>   - HOME/SYSTEMS/RADIO/LOCATION/DEVICE/DIAGNOSTICS");
-  Serial.println("  touch corners - non-destructive four-corner mapping qualification");
+  Serial.println("  display white-test - once-per-boot cleanup/white diagnostic");
+  Serial.println("  page <name>   - HOME/SYSTEMS/RADIO/LOCATION/DEVICE/DIAGNOSTICS/TEXT QUALIFICATION");
+  Serial.println("  framebuffer dump <name> - emit an unrefreshed packed 4-bpp page buffer");
   Serial.println("  touch test    - one redacted coordinate observation");
+  Serial.println("  touch debug on/off - explicit raw/transformed coordinate diagnostics");
+  Serial.println("  touch reset/status - reset qualification or print local state");
   Serial.println("  help");
 }
 
@@ -190,7 +213,9 @@ void identifyI2c() {
   printResult("rtc", rtcObserved ? "OBSERVED" : "NOT_PRESENT",
               rtcObserved ? "PCF8563-compatible device at 0x51" : "no response at 0x51");
   printResult("bq25896", chargerObserved ? "OBSERVED" : "NOT_PRESENT", "address 0x6A");
-  printResult("bq27220", gaugeObserved ? "OBSERVED" : "NOT_PRESENT", "address 0x55");
+  printResult("bq27220", gaugeObserved ? "BAT_UNKNOWN" : "NOT_PRESENT",
+              gaugeObserved ? "presence verified; SOC contract unqualified"
+                            : "fuel gauge did not respond");
   printResult("gt911", touchObserved ? "OBSERVED" : "NOT_PRESENT",
               touch14 ? "address 0x14" : (touch5d ? "address 0x5D" : "no response at 0x14/0x5D"));
 }
@@ -201,12 +226,14 @@ void testSd() {
   SPI.begin(hq::kBoard.spiSclk, hq::kBoard.spiMiso, hq::kBoard.spiMosi);
   if (!SD.begin(hq::kBoard.sdCs, SPI, 1000000)) {
     printResult("microsd", "NOT_PRESENT", "read-only qualification mount failed");
+    SPI.end();
     return;
   }
   sdObserved = SD.cardType() != CARD_NONE;
   printResult("microsd", sdObserved ? "OBSERVED" : "NOT_PRESENT",
               sdObserved ? "card initialized; no file created" : "interface initialized; no card");
   SD.end();
+  SPI.end();  // Release GPIO matrix ownership before the next EPD refresh.
 }
 
 bool setSharedRail(bool enabled) {
@@ -252,6 +279,15 @@ int configureRadio() {
                           RADIOLIB_SX126X_SYNC_WORD_PRIVATE, 10, 8, 2.4, false);
   if (state != RADIOLIB_ERR_NONE) return state;
   return radio.setDio2AsRfSwitch();
+}
+
+void releaseSharedSpiForDisplay() {
+  if (radioListening) {
+    radio.sleep();
+    radioListening = false;
+    Serial.println("SX1262 receive paused: display owns overlapping candidate GPIOs");
+  }
+  SPI.end();
 }
 
 void probeRadio(bool receive) {
@@ -324,38 +360,37 @@ void startGpsObservation() {
               " lines; NMEA payload and coordinates redacted");
   syncUiState();
 }
-void testDisplay(bool bootRecovery = false) {
+void testDisplay() {
 #if defined(HQ_PROFILE_LEGACY_H752)
   printResult("display", "BLOCKED",
               "epd_board_v7 belongs to current Pro baseline, not legacy H752");
 #else
-  const bool rendered = uiController.renderIfDirty(millis(), bootRecovery);
+  // The current-Pro candidate profile overlaps SPI/radio signals with EPD v7
+  // parallel data pins. Never refresh while Arduino SPI owns those GPIOs.
+  releaseSharedSpiForDisplay();
+  const bool cleanupRequested = bootCleanupPending && !uiController.cleanupUsed();
+  const bool rendered = uiController.renderIfDirty(millis(), cleanupRequested);
+  if (rendered) touchController.notifyDisplayUpdateFinished(millis());
+  if (rendered && cleanupRequested && uiController.cleanupUsed()) {
+    const size_t written = bootPreferences.putUInt("display_rev", kDisplayCleanupRevision);
+    bootCleanupPending = written == 0;
+    Serial.printf("DISPLAY cleanup_revision=%lu persistence=%s\n",
+                  static_cast<unsigned long>(kDisplayCleanupRevision),
+                  bootCleanupPending ? "FAILED" : "SAVED");
+  }
   printResult("display", rendered ? "COMMAND_ACCEPTED" : "NO_CHANGE",
               "portrait GC16 retained page; high voltage off after update");
 #endif
 }
 
 void testTouch() {
-  const uint8_t address = i2cPresent(0x14) ? 0x14 : (i2cPresent(0x5D) ? 0x5D : 0);
-  if (!address) { printResult("touch", "NOT_PRESENT", "GT911 address absent"); return; }
+  if (!touchObserved) { printResult("touch", "NOT_PRESENT", "GT911 address absent"); return; }
   Serial.println("Touch observation: touch panel once within 15 seconds.");
-  const uint32_t deadline = millis() + 15000;
-  while (static_cast<int32_t>(deadline - millis()) > 0) {
-    Wire.beginTransmission(address); Wire.write(0x81); Wire.write(0x4E);
-    if (Wire.endTransmission(false) == 0 && Wire.requestFrom(address, (uint8_t)5) == 5) {
-      uint8_t status = Wire.read(); uint8_t xl = Wire.read(); uint8_t xh = Wire.read(); uint8_t yl = Wire.read(); uint8_t yh = Wire.read();
-      if ((status & 0x80) && (status & 0x0F)) {
-        const int rawX = xl | (xh << 8), rawY = yl | (yh << 8);
-        input::transformInvertedPortrait(rawX, rawY);
-        printResult("touch", "OBSERVED",
-                    "coordinate captured and clamped; values redacted; run 'touch corners' to qualify mapping");
-        Wire.beginTransmission(address); Wire.write(0x81); Wire.write(0x4E); Wire.write(0); Wire.endTransmission();
-        return;
-      }
-    }
-    delay(20);
-  }
-  printResult("touch", "UNVERIFIED", "controller present; no coordinate observed");
+  const bool observed = touchController.observeTouch(15000);
+  printResult("touch", observed ? "OBSERVED" : "UNVERIFIED",
+              observed
+                  ? "coordinate captured and clamped; values redacted; run 'touch reset' to requalify mapping"
+                  : "controller present; no coordinate observed");
 }
 
 bool requestNamedPage(const String& name) {
@@ -366,12 +401,30 @@ bool requestNamedPage(const String& name) {
   else if (name == "location") page = ui::Page::Location;
   else if (name == "device") page = ui::Page::Device;
   else if (name == "diagnostics") page = ui::Page::Diagnostics;
+  else if (name == "calibration" || name == "display calibration") page = ui::Page::DisplayCalibration;
+  else if (name == "text qualification") page = ui::Page::TextQualification;
+  else if (name == "settings") page = ui::Page::Settings;
   else return false;
   if (!uiController.requestPage(page, millis())) {
     printResult("ui", "RATE_LIMITED", "page unchanged or refresh cooldown active");
     return true;
   }
   testDisplay();
+  return true;
+}
+
+bool namedPage(const String& name, ui::Page& page) {
+  if (name == "home") page = ui::Page::Home;
+  else if (name == "systems") page = ui::Page::Systems;
+  else if (name == "radio") page = ui::Page::Radio;
+  else if (name == "location") page = ui::Page::Location;
+  else if (name == "device") page = ui::Page::Device;
+  else if (name == "diagnostics") page = ui::Page::Diagnostics;
+  else if (name == "calibration" || name == "display calibration") page = ui::Page::DisplayCalibration;
+  else if (name == "text qualification") page = ui::Page::TextQualification;
+  else if (name == "settings") page = ui::Page::Settings;
+  else if (name == "touch setup") page = ui::Page::TouchSetup;
+  else return false;
   return true;
 }
 
@@ -392,9 +445,30 @@ void processCommand(String command) {
     printResult("sx1262", "STOPPED", "radio sleep requested");
   } else if (command == "gps listen") startGpsObservation();
   else if (command == "display test") { syncUiState(); testDisplay(); }
-  else if (command == "display clear") { syncUiState(); testDisplay(true); }
+  else if (command == "display white-test") {
+    releaseSharedSpiForDisplay();
+    const bool rendered=uiController.renderWhiteTest(millis());
+    if(rendered)touchController.notifyDisplayUpdateFinished(millis());
+    printResult("display_white_test",rendered?"COMMAND_ACCEPTED":(uiController.whiteTestUsed()?"GUARD_BLOCKED":"FAILED"),
+                rendered?"white framebuffer, black border and identifier rendered once":"once-per-boot guard or display failure");
+  }
   else if (command == "touch test") testTouch();
-  else if (command == "touch corners") { touchController.runFourCornerTest(); syncUiState(); }
+  else if (command == "touch debug on") { touchController.setDiagnosticMode(true); printResult("touch", "DIAGNOSTIC_ENABLED", "raw and transformed coordinates may be logged"); }
+  else if (command == "touch debug off") { touchController.setDiagnosticMode(false); printResult("touch", "DIAGNOSTIC_DISABLED", "coordinates redacted"); }
+  else if (command == "touch reset") { touchController.resetQualification(); touchController.startQualification(); syncUiState(); uiController.requestPage(ui::Page::TouchSetup,millis()); testDisplay(); }
+  else if (command == "touch status") touchController.printStatus();
+  else if (command.startsWith("framebuffer dump ")) {
+    ui::Page page;
+    const String name = command.substring(17);
+    if (!namedPage(name, page)) {
+      printResult("framebuffer_dump", "INVALID_PAGE", name);
+    } else {
+      const bool dumped = uiController.dumpPackedFramebuffer(page);
+      printResult("framebuffer_dump", dumped ? "COMPLETE" : "FAILED",
+                  dumped ? "authoritative composition buffer emitted; display not refreshed"
+                         : "buffer unavailable or write incomplete");
+    }
+  }
   else if (command.startsWith("page ") && requestNamedPage(command.substring(5))) {}
   else if (command == "help" || command.isEmpty()) printHelp();
   else Serial.println("Unknown command. Type 'help'.");
@@ -418,6 +492,7 @@ void setup() {
 
   printProfile();
   Serial.printf("Firmware: %s build=%s %s\n", kFirmwareId, __DATE__, __TIME__);
+  Serial.println("UI QUAL 3");
   Serial.printf("RESET reason=%s code=%d\n", resetReasonName(esp_reset_reason()), esp_reset_reason());
   Serial.printf("MCU model=%s revision=%d cores=%d cpu=%dMHz flash=%u bytes\n",
                 ESP.getChipModel(), ESP.getChipRevision(), ESP.getChipCores(), ESP.getCpuFreqMHz(), ESP.getFlashChipSize());
@@ -428,28 +503,153 @@ void setup() {
   printResult("psram", psramBytes ? "OBSERVED" : "NOT_OBSERVED",
               String(psramBytes) + " bytes reported by runtime");
   identifyI2c();
+  batteryManager.begin(gaugeObserved);
+  timeService.begin(rtcObserved);
   touchController.begin();
+  if (bootPreferences.begin("sf_boot", false)) {
+    const uint32_t storedRevision = bootPreferences.getUInt("display_rev", 0);
+    bootCleanupPending = storedRevision != kDisplayCleanupRevision;
+    Serial.printf("DISPLAY cleanup_revision stored=%lu required=%lu pending=%s\n",
+                  static_cast<unsigned long>(storedRevision),
+                  static_cast<unsigned long>(kDisplayCleanupRevision),
+                  bootCleanupPending ? "YES" : "NO");
+  } else {
+    bootCleanupPending = true;
+    Serial.println("DISPLAY cleanup_revision storage=UNAVAILABLE pending=YES ram_guard=ENABLED");
+  }
   syncUiState();
-  if (uiController.begin()) testDisplay(false);
+  if (uiController.begin()) {
+    if (!touchController.mappingVerified()) {
+      // Qualification state, not controller detection, owns the boot page. If
+      // GT911 is absent the visible setup remains truthful instead of presenting
+      // an enabled-looking HOME whose navigation silently ignores every touch.
+      if (touchObserved) touchController.startQualification();
+      syncUiState();
+      uiController.requestPage(ui::Page::TouchSetup, millis());
+    }
+    Serial.printf("DISPLAY initial_page=%s touch_qualified=%s\n",
+                  ui::pageName(uiController.page()),
+                  touchController.mappingVerified() ? "YES" : "NO");
+    // Cleanup ownership is the first physical render, not any particular page.
+    testDisplay();
+  }
   else printResult("display", "FAILED", "UI framebuffer initialization failed");
+
+  // Finish the initial high-voltage e-paper operation before enabling Wi-Fi.
+  // This prevents radio startup current from overlapping a guarded full clear
+  // and GC16 refresh; the display controller has already powered the panel off.
+  if (!telemetryManager.begin()) {
+    printResult("telemetry", "FAILED", "local manager initialization failed");
+  }
+  if (!weatherManager.begin()) {
+    printResult("weather", "FAILED", "local manager initialization failed");
+  }
   printHelp();
 }
 
 void loop() {
   if (Serial.available()) processCommand(Serial.readStringUntil('\n'));
-  const input::Tap tap = touchController.poll(millis());
-  if (tap.accepted) {
+  const uint32_t now = millis();
+  const uint32_t latestTelemetryVersion = telemetryManager.version();
+  const telemetry::Snapshot telemetryState = telemetryManager.snapshot();
+  timeService.poll(now, telemetryState.wifiState == telemetry::WifiState::Connected ||
+                        WiFi.status() == WL_CONNECTED);
+  batteryManager.poll(now, gaugeObserved);
+  const uint32_t latestTimeVersion = timeService.version();
+  const uint32_t latestWeatherVersion = weatherManager.version();
+  const uint32_t latestBatteryVersion = batteryManager.version();
+  if (latestTelemetryVersion != observedTelemetryVersion ||
+      latestTimeVersion != observedTimeVersion ||
+      latestWeatherVersion != observedWeatherVersion ||
+      latestBatteryVersion != observedBatteryVersion) {
+    observedTelemetryVersion = latestTelemetryVersion;
+    observedTimeVersion = latestTimeVersion;
+    observedWeatherVersion = latestWeatherVersion;
+    observedBatteryVersion = latestBatteryVersion;
+    syncUiState();
+    if (uiController.dirty() && !uiController.inputBlocked(now)) testDisplay();
+  }
+  const input::TouchAction action = touchController.poll(now, uiController.inputBlocked(now));
+  if (action.type == input::ActionType::QualificationRejected) {
+    Serial.printf("TOUCH setup=REJECTED step=%u reason=%s\n",
+                  static_cast<unsigned>(touchController.qualificationStep()+1),action.reason);
+  } else if (action.type == input::ActionType::QualificationPassed) {
+    syncUiState();
+    if (touchController.mappingVerified()) {
+      uiController.requestPage(ui::Page::Home, millis());
+      Serial.println("TOUCH setup=COMPLETE state=TOUCH_READY navigation=UNLOCKED target=HOME");
+      testDisplay();
+    } else {
+      Serial.printf("TOUCH setup=PROGRESS accepted=%u next=%s display_refresh=REQUIRED armed=NO\n",
+                    static_cast<unsigned>(touchController.qualificationStep()), action.reason);
+      // Keep the guided instruction/progress authoritative after each accepted
+      // corner. GC16 remains the only mode; four setup updates are intentional.
+      testDisplay();
+    }
+  } else if (action.type == input::ActionType::Tap) {
     ui::Page destination = uiController.page();
-    if (ui::kNavBounds.contains(tap.point.x, tap.point.y)) {
-      const int index = tap.point.x / 108;
+    if (ui::kNavBounds.contains(action.point.x, action.point.y)) {
+      const int index = action.point.x / ui::spec::kNavItemWidth;
       const ui::Page pages[] = {ui::Page::Home, ui::Page::Systems, ui::Page::Radio,
                                 ui::Page::Location, ui::Page::Device};
       destination = pages[constrain(index, 0, 4)];
     } else if (uiController.page() == ui::Page::Device &&
-               ui::Rect{24, 550, 492, 88}.contains(tap.point.x, tap.point.y)) {
+               ui::kDeviceDiagnosticsAction.contains(action.point.x, action.point.y)) {
       destination = ui::Page::Diagnostics;
+    } else if (uiController.page() == ui::Page::Device &&
+               ui::kDeviceRefreshAction.contains(action.point.x, action.point.y)) {
+      telemetryManager.requestRefresh();
+      syncUiState();
+      uiController.forceDirty();
+      testDisplay();
+    } else if (uiController.page() == ui::Page::Device &&
+               ui::kDeviceTemperatureAction.contains(action.point.x, action.point.y)) {
+      telemetryManager.toggleTemperatureUnit();
+      syncUiState();
+      testDisplay();
+    } else if (uiController.page() == ui::Page::Device &&
+               ui::kDeviceSettingsAction.contains(action.point.x, action.point.y)) {
+      destination = ui::Page::Settings;
+    } else if (uiController.page() == ui::Page::Settings &&
+               ui::kSettingsTimezoneAction.contains(action.point.x, action.point.y)) {
+      timeService.cycleTimezone();
+      syncUiState();
+      testDisplay();
+    } else if (uiController.page() == ui::Page::Settings &&
+               ui::kSettingsFormatAction.contains(action.point.x, action.point.y)) {
+      timeService.toggleHourFormat();
+      syncUiState();
+      testDisplay();
+    } else if (uiController.page() == ui::Page::Settings &&
+               ui::kSettingsSyncAction.contains(action.point.x, action.point.y)) {
+      timeService.requestSync();
+      syncUiState();
+      testDisplay();
+    } else if (uiController.page() == ui::Page::Systems &&
+               ui::kSystemsSectionAction.contains(action.point.x, action.point.y)) {
+      systemsSection = (systemsSection + 1) % 4;
+      syncUiState();
+      testDisplay();
+    } else if (uiController.page() == ui::Page::Diagnostics &&
+               ui::kDiagnosticsTextQualificationAction.contains(action.point.x, action.point.y)) {
+      destination = ui::Page::TextQualification;
     }
-    if (uiController.requestPage(destination, millis())) testDisplay();
+    if (uiController.requestPage(destination, millis())) {
+      if (destination == ui::Page::TouchSetup) {
+        touchController.startQualification();
+        syncUiState();
+      }
+      Serial.printf("TOUCH navigation=SELECTED target=%u gesture=TAP\n",static_cast<unsigned>(destination));
+      testDisplay();
+    }
+  } else if (action.type == input::ActionType::SwipeLeft || action.type == input::ActionType::SwipeRight) {
+    const ui::Page pages[] = {ui::Page::Home,ui::Page::Systems,ui::Page::Radio,ui::Page::Location,ui::Page::Device};
+    int index=0; for(int i=0;i<5;++i) if(uiController.page()==pages[i]) index=i;
+    index=constrain(index+(action.type==input::ActionType::SwipeLeft?1:-1),0,4);
+    if(uiController.requestPage(pages[index],millis())){
+      Serial.printf("TOUCH navigation=SELECTED target=%u gesture=%s\n",static_cast<unsigned>(pages[index]),action.type==input::ActionType::SwipeLeft?"SWIPE_LEFT":"SWIPE_RIGHT");
+      testDisplay();
+    }
   }
   if (radioListening && digitalRead(hq::kBoard.loraIrq)) {
     String packet;

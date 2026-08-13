@@ -1,57 +1,34 @@
 #include "touch_controller.h"
-
 #include <Arduino.h>
 #include <Wire.h>
-
+#include <limits.h>
+namespace input { namespace {
+constexpr uint16_t kStatusRegister=0x814E,kFirstPointRegister=0x814F;
+constexpr int kRawMaxX=959,kRawMaxY=539;
+constexpr uint8_t kQualificationSchema=3;
+constexpr uint32_t kContactReportGraceMs=40;
+constexpr Point kExpectedTargets[]={{ui::spec::kTouchTargetInset,ui::spec::kTouchTargetInset},
+ {ui::kCanvasWidth-1-ui::spec::kTouchTargetInset,ui::spec::kTouchTargetInset},
+ {ui::spec::kTouchTargetInset,ui::kCanvasHeight-1-ui::spec::kTouchTargetInset},
+ {ui::kCanvasWidth-1-ui::spec::kTouchTargetInset,ui::kCanvasHeight-1-ui::spec::kTouchTargetInset}};
+constexpr Transform kCandidates[]={Transform::Identity,Transform::InvertX,Transform::InvertY,Transform::InvertXY,Transform::Swap,Transform::SwapInvertX,Transform::SwapInvertY,Transform::SwapInvertXY};
+const char* kCornerNames[]={"TOP_LEFT","TOP_RIGHT","BOTTOM_LEFT","BOTTOM_RIGHT"};
+bool readRegister(uint8_t a,uint16_t r,uint8_t* d,size_t n){Wire.beginTransmission(a);Wire.write(r>>8);Wire.write(r&0xFF);if(Wire.endTransmission(false)!=0||Wire.requestFrom(a,static_cast<uint8_t>(n))!=n)return false;for(size_t i=0;i<n;++i)d[i]=Wire.read();return true;}
+void clearStatus(uint8_t a){Wire.beginTransmission(a);Wire.write(kStatusRegister>>8);Wire.write(kStatusRegister&0xFF);Wire.write(0);Wire.endTransmission();}
+}}
 namespace input {
-
-Point transformInvertedPortrait(int rawX, int rawY) {
-  return {constrain(539 - rawY, 0, ui::kCanvasWidth - 1),
-          constrain(rawX, 0, ui::kCanvasHeight - 1)};
-}
-
-bool TouchController::begin() {
-  for (uint8_t candidate : {static_cast<uint8_t>(0x14), static_cast<uint8_t>(0x5D)}) {
-    Wire.beginTransmission(candidate);
-    if (Wire.endTransmission() == 0) { address_ = candidate; break; }
-  }
-  return address_ != 0;
-}
-
-bool TouchController::readRaw(bool& pressed, Point& point) {
-  if (!address_) return false;
-  Wire.beginTransmission(address_); Wire.write(0x81); Wire.write(0x4E);
-  if (Wire.endTransmission(false) != 0 || Wire.requestFrom(address_, static_cast<uint8_t>(5)) != 5) return false;
-  const uint8_t status=Wire.read(), xl=Wire.read(), xh=Wire.read(), yl=Wire.read(), yh=Wire.read();
-  pressed=(status&0x80)&&(status&0x0F); point=transformInvertedPortrait(xl|(xh<<8),yl|(yh<<8));
-  if(status&0x80){Wire.beginTransmission(address_);Wire.write(0x81);Wire.write(0x4E);Wire.write(0);Wire.endTransmission();}
-  return true;
-}
-
-Tap TouchController::poll(uint32_t nowMs) {
-  bool pressed=false; Point p{}; if(!readRaw(pressed,p)) return {false,{0,0}};
-  if(pressed&&!down_){down_=true;start_=last_=p;downAtMs_=nowMs;return {false,p};}
-  if(pressed&&down_){last_=p;return {false,p};}
-  if(!pressed&&down_){down_=false;const int dx=abs(last_.x-start_.x),dy=abs(last_.y-start_.y);
-    const bool accepted=mappingVerified_&&dx<24&&dy<24&&nowMs-downAtMs_>=35&&nowMs-downAtMs_<1200&&nowMs-lastAcceptedMs_>600;
-    if(accepted)lastAcceptedMs_=nowMs;return {accepted,start_};}
-  return {false,p};
-}
-
-bool TouchController::runFourCornerTest() {
-  if(!address_) return false;
-  const Point expected[]={{0,0},{539,0},{0,959},{539,959}};
-  const char* names[]={"TOP_LEFT","TOP_RIGHT","BOTTOM_LEFT","BOTTOM_RIGHT"};
-  for(int i=0;i<4;++i){
-    Serial.printf("TOUCH corner=%s action=PRESS timeout=15s\n",names[i]);
-    const uint32_t deadline=millis()+15000; bool hit=false;
-    while(static_cast<int32_t>(deadline-millis())>0){bool pressed=false;Point p{};if(readRaw(pressed,p)&&pressed){
-      hit=abs(p.x-expected[i].x)<=90&&abs(p.y-expected[i].y)<=110;
-      Serial.printf("TOUCH corner=%s x=%d y=%d status=%s\n",names[i],p.x,p.y,hit?"PASS":"FAIL");
-      while(pressed){delay(25);readRaw(pressed,p);} break;} delay(20);}
-    if(!hit){mappingVerified_=false;Serial.println("TOUCH navigation=LOCKED mapping=UNVERIFIED");return false;}
-  }
-  mappingVerified_=true; Serial.println("TOUCH navigation=ENABLED mapping=FOUR_CORNERS_VERIFIED"); return true;
-}
-
+Point applyTransform(Transform t,int rx,int ry){int x=rx,y=ry;switch(t){case Transform::Identity:break;case Transform::InvertX:x=kRawMaxX-rx;break;case Transform::InvertY:y=kRawMaxY-ry;break;case Transform::InvertXY:x=kRawMaxX-rx;y=kRawMaxY-ry;break;case Transform::Swap:x=ry;y=rx;break;case Transform::SwapInvertX:x=kRawMaxY-ry;y=rx;break;case Transform::SwapInvertY:x=ry;y=kRawMaxX-rx;break;case Transform::SwapInvertXY:x=kRawMaxY-ry;y=kRawMaxX-rx;break;}return{constrain(x,0,ui::kCanvasWidth-1),constrain(y,0,ui::kCanvasHeight-1)};}
+const char* transformName(Transform t){switch(t){case Transform::Identity:return"RAW_X_RAW_Y";case Transform::InvertX:return"INVERT_X";case Transform::InvertY:return"INVERT_Y";case Transform::InvertXY:return"INVERT_XY";case Transform::Swap:return"SWAP";case Transform::SwapInvertX:return"SWAP_INVERT_X";case Transform::SwapInvertY:return"SWAP_INVERT_Y";case Transform::SwapInvertXY:return"SWAP_INVERT_XY";}return"UNKNOWN";}
+bool cornerContains(uint8_t c,Point p){return c<4&&abs(p.x-kExpectedTargets[c].x)<=ui::spec::kTouchCornerX&&abs(p.y-kExpectedTargets[c].y)<=ui::spec::kTouchCornerY;}
+bool TouchController::begin(){for(uint8_t c:{static_cast<uint8_t>(0x14),static_cast<uint8_t>(0x5D)}){Wire.beginTransmission(c);if(Wire.endTransmission()==0){address_=c;break;}}preferences_.begin("field-touch",false);const uint8_t storedSchema=preferences_.getUChar("schema",0);mappingVerified_=storedSchema==kQualificationSchema&&preferences_.getBool("qualified",false);transform_=static_cast<Transform>(preferences_.getUChar("transform",static_cast<uint8_t>(Transform::SwapInvertX)));if(static_cast<uint8_t>(transform_)>7){transform_=Transform::SwapInvertX;mappingVerified_=false;}if(address_)clearStatus(address_);cleanReleaseSinceMs_=0;armed_=down_=releaseObserved_=false;Serial.printf("TOUCH controller=%s mode=POLLING irq=UNAVAILABLE qualification=%s schema_stored=%u schema_required=%u transform=%s stale_state=DRAINED armed=NO\n",address_?"OBSERVED":"NOT_PRESENT",mappingVerified_?"SAVED":"REQUIRED",static_cast<unsigned>(storedSchema),static_cast<unsigned>(kQualificationSchema),transformName(transform_));return address_!=0;}
+void TouchController::saveQualification(bool v){mappingVerified_=v;if(v){preferences_.putUChar("transform",static_cast<uint8_t>(transform_));preferences_.putUChar("schema",kQualificationSchema);preferences_.putBool("qualified",true);}else{preferences_.putBool("qualified",false);preferences_.putUChar("schema",0);}Serial.printf("TOUCH qualification=%s persistence=NVS_WRITE schema=%u transform=%s samples=%u\n",v?"VERIFIED":"RESET",static_cast<unsigned>(v?kQualificationSchema:0),transformName(transform_),static_cast<unsigned>(qualificationStep_));}
+void TouchController::startQualification(){qualifying_=true;qualificationStep_=0;mappingVerified_=false;down_=armed_=stableContact_=releaseObserved_=false;cleanReleaseSinceMs_=0;if(address_)clearStatus(address_);Serial.println("TOUCH setup=START requested=TOP_LEFT samples=0/4 stale_state=DRAINED release_baseline=REQUIRED armed=NO");}
+void TouchController::resetQualification(){qualifying_=false;qualificationStep_=0;armed_=down_=false;cleanReleaseSinceMs_=0;saveQualification(false);Serial.println("TOUCH setup=RESET navigation=LOCKED");}
+void TouchController::notifyDisplayUpdateFinished(uint32_t){if(address_)clearStatus(address_);down_=armed_=stableContact_=releaseObserved_=false;cleanReleaseSinceMs_=0;Serial.println("TOUCH display_update=FINISHED stale_state=DRAINED release_baseline=REQUIRED clean_release_required_ms=500 armed=NO");}
+bool TouchController::readRaw(bool& pressed,Point& raw,Point& p){if(!address_)return false;uint8_t status=0;if(!readRegister(address_,kStatusRegister,&status,1))return false;const uint32_t now=millis();const uint8_t count=status&0x0F;if(!(status&0x80)){pressed=down_&&(now-lastContactReportMs_<=kContactReportGraceMs);raw=rawStart_;p=last_;return true;}if(count==0){pressed=false;releaseObserved_=true;raw=rawStart_;p=last_;clearStatus(address_);return true;}uint8_t d[8]{};if(!readRegister(address_,kFirstPointRegister,d,sizeof(d))){clearStatus(address_);return false;}raw={d[1]|(d[2]<<8),d[3]|(d[4]<<8)};p=applyTransform(transform_,raw.x,raw.y);pressed=true;releaseObserved_=false;lastContactReportMs_=now;clearStatus(address_);if(!sampleSeen_){sampleSeen_=true;Serial.println("TOUCH sample=RECEIVED transport=POLLING");}if(diagnosticMode_)Serial.printf("TOUCH raw_x=%d raw_y=%d x=%d y=%d contact=DOWN target=%s armed=%s\n",raw.x,raw.y,p.x,p.y,qualifying_?kCornerNames[min(static_cast<int>(qualificationStep_),3)]:"NONE",armed_?"YES":"NO");return true;}
+bool TouchController::observeTouch(uint32_t timeout){if(!address_)return false;uint32_t end=millis()+timeout;while(static_cast<int32_t>(end-millis())>0){bool pressed=false;Point raw{},p{};if(readRaw(pressed,raw,p)&&pressed)return true;delay(20);}return false;}
+TouchAction TouchController::reject(Point p,const char* r){if(diagnosticMode_)Serial.printf("TOUCH result=REJECTED reason=%s target=%s\n",r,qualifying_?kCornerNames[min(static_cast<int>(qualificationStep_),3)]:"NONE");return{qualifying_?ActionType::QualificationRejected:ActionType::None,p,r};}
+bool TouchController::selectPhysicalTransform(){int bestScore=INT_MAX;Transform best=Transform::Identity;bool bestFits=false;for(Transform c:kCandidates){int score=0;bool fits=true;for(uint8_t i=0;i<4;++i){Point p=applyTransform(c,physicalSamples_[i].x,physicalSamples_[i].y);int dx=abs(p.x-kExpectedTargets[i].x),dy=abs(p.y-kExpectedTargets[i].y);score+=dx+dy;fits=fits&&dx<=ui::spec::kTouchMappingToleranceX&&dy<=ui::spec::kTouchMappingToleranceY;}if(diagnosticMode_)Serial.printf("TOUCH transform_candidate=%s score=%d fits=%s samples=4\n",transformName(c),score,fits?"YES":"NO");if(score<bestScore){bestScore=score;best=c;bestFits=fits;}}if(!bestFits)return false;transform_=best;Serial.printf("TOUCH transform=SELECTED name=%s score=%d basis=FOUR_PHYSICAL_TARGET_SAMPLES tolerance_x=%d tolerance_y=%d\n",transformName(transform_),bestScore,ui::spec::kTouchMappingToleranceX,ui::spec::kTouchMappingToleranceY);return true;}
+TouchAction TouchController::poll(uint32_t now,bool blocked){bool pressed=false;Point raw{},p{};if(!readRaw(pressed,raw,p))return{ActionType::None,{0,0},"NO_SAMPLE"};if(blocked){if(pressed){down_=true;cleanReleaseSinceMs_=0;}else if(releaseObserved_)down_=false;armed_=stableContact_=false;return reject(p,"DISPLAY_UPDATE_ACTIVE");}if(!armed_){if(pressed){down_=true;cleanReleaseSinceMs_=0;return reject(p,"PRESS_BEFORE_ARM");}down_=false;if(!releaseObserved_)return{ActionType::None,p,"RELEASE_BASELINE_REQUIRED"};if(!cleanReleaseSinceMs_)cleanReleaseSinceMs_=now;if(now-cleanReleaseSinceMs_>=static_cast<uint32_t>(ui::spec::kTouchCleanReleaseMs)){armed_=true;Serial.printf("TOUCH armed=YES clean_release_ms=%lu target=%s\n",static_cast<unsigned long>(now-cleanReleaseSinceMs_),qualifying_?kCornerNames[min(static_cast<int>(qualificationStep_),3)]:"NAVIGATION");}return{ActionType::None,p,"CLEAN_RELEASE_WAIT"};}if(pressed&&!down_){down_=true;stableContact_=false;rawStart_=raw;start_=last_=p;downAtMs_=now;return{ActionType::None,p,"NEW_PRESS"};}if(pressed&&down_){last_=p;if(now-downAtMs_>=static_cast<uint32_t>(ui::spec::kTouchMinPressMs))stableContact_=true;return{ActionType::None,p,stableContact_?"STABLE_CONTACT":"STABILIZING"};}if(!pressed&&down_){if(!releaseObserved_)return{ActionType::None,p,"CONTACT_REPORT_GAP"};down_=false;armed_=false;cleanReleaseSinceMs_=now;uint32_t duration=now-downAtMs_;if(!stableContact_||duration<static_cast<uint32_t>(ui::spec::kTouchMinPressMs))return reject(start_,"PRESS_TOO_SHORT");if(duration>=static_cast<uint32_t>(ui::spec::kTouchMaxPressMs))return reject(start_,"PRESS_TOO_LONG");if(abs(last_.x-start_.x)>=ui::spec::kTouchTapSlop||abs(last_.y-start_.y)>=ui::spec::kTouchTapSlop)return reject(start_,"MOVEMENT_EXCEEDED_TAP_SLOP");if(qualifying_){bool requestedCornerPossible=false;for(Transform candidate:kCandidates){if(cornerContains(qualificationStep_,applyTransform(candidate,rawStart_.x,rawStart_.y))){requestedCornerPossible=true;break;}}if(!requestedCornerPossible)return reject(start_,"OUTSIDE_REQUESTED_PHYSICAL_CORNER");physicalSamples_[qualificationStep_]=rawStart_;++qualificationStep_;if(qualificationStep_==4){if(!selectPhysicalTransform()){qualifying_=false;qualificationStep_=0;saveQualification(false);return reject(start_,"NO_TRANSFORM_FITS_FOUR_PHYSICAL_SAMPLES");}qualifying_=false;saveQualification(true);return{ActionType::QualificationPassed,start_,"FOUR_PHYSICAL_CORNERS_VERIFIED"};}return{ActionType::QualificationPassed,start_,kCornerNames[qualificationStep_]};}if(!mappingVerified_)return reject(start_,"QUALIFICATION_REQUIRED");return{ActionType::Tap,start_,"TAP"};}return{ActionType::None,p,"IDLE"};}
+void TouchController::printStatus()const{Serial.printf("TOUCH status controller=%s qualification=%s qualifying=%s step=%u samples=%u armed=%s contact=%s transform=%s debug=%s\n",address_?"OBSERVED":"NOT_PRESENT",mappingVerified_?"VERIFIED":"REQUIRED",qualifying_?"YES":"NO",static_cast<unsigned>(qualificationStep_),static_cast<unsigned>(qualificationStep_),armed_?"YES":"NO",down_?"DOWN":"RELEASED",transformName(transform_),diagnosticMode_?"ON":"OFF");}
 }  // namespace input

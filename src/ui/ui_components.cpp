@@ -5,23 +5,31 @@
 namespace ui {
 namespace {
 
-// Deterministic ASCII-only 5x7 instrument face. Unsupported glyphs become spaces.
-const uint8_t kFont[][5] = {
-  {0,0,0,0,0},{0x3E,0x51,0x49,0x45,0x3E},{0,0x42,0x7F,0x40,0},{0x42,0x61,0x51,0x49,0x46},
-  {0x21,0x41,0x45,0x4B,0x31},{0x18,0x14,0x12,0x7F,0x10},{0x27,0x45,0x45,0x45,0x39},{0x3C,0x4A,0x49,0x49,0x30},{1,0x71,9,5,3},{0x36,0x49,0x49,0x49,0x36},{6,0x49,0x49,0x29,0x1E},
-  {0x7E,0x11,0x11,0x11,0x7E},{0x7F,0x49,0x49,0x49,0x36},{0x3E,0x41,0x41,0x41,0x22},{0x7F,0x41,0x41,0x22,0x1C},{0x7F,0x49,0x49,0x49,0x41},{0x7F,9,9,9,1},{0x3E,0x41,0x49,0x49,0x7A},{0x7F,8,8,8,0x7F},{0,0x41,0x7F,0x41,0},{0x20,0x40,0x41,0x3F,1},{0x7F,8,0x14,0x22,0x41},{0x7F,0x40,0x40,0x40,0x40},{0x7F,2,0x0C,2,0x7F},{0x7F,4,8,0x10,0x7F},{0x3E,0x41,0x41,0x41,0x3E},{0x7F,9,9,9,6},{0x3E,0x41,0x51,0x21,0x5E},{0x7F,9,0x19,0x29,0x46},{0x46,0x49,0x49,0x49,0x31},{1,1,0x7F,1,1},{0x3F,0x40,0x40,0x40,0x3F},{0x1F,0x20,0x40,0x20,0x1F},{0x3F,0x40,0x38,0x40,0x3F},{0x63,0x14,8,0x14,0x63},{7,8,0x70,8,7},{0x61,0x51,0x49,0x45,0x43},
-  {0,0x36,0x36,0,0},{0x20,0x10,8,4,2},{8,8,8,8,8},{0,0x60,0x60,0,0}
-};
+const fonts::Font& fontFor(FontRole role) {
+  switch (role) {
+    case FontRole::Caption: return fonts::kCaption;
+    case FontRole::Body: return fonts::kBody;
+    case FontRole::CardHeading: return fonts::kCardHeading;
+    case FontRole::PageHeading: return fonts::kPageHeading;
+    case FontRole::Brand: return fonts::kBrand;
+    case FontRole::Metric: return fonts::kMetric;
+    case FontRole::Navigation: return fonts::kNavigation;
+    case FontRole::QualificationCurrent: return fonts::kQualificationCurrent;
+    case FontRole::QualificationRegularAa: return fonts::kQualificationRegularAa;
+    case FontRole::QualificationMediumAa: return fonts::kQualificationMediumAa;
+    case FontRole::QualificationSemiboldAa: return fonts::kQualificationSemiboldAa;
+    case FontRole::QualificationBoldMono: return fonts::kQualificationBoldMono;
+  }
+  return fonts::kBody;
+}
 
 int glyphIndex(char raw) {
-  const char c = raw >= 'a' && raw <= 'z' ? raw - 32 : raw;
-  if (c >= '0' && c <= '9') return 1 + c - '0';
-  if (c >= 'A' && c <= 'Z') return 11 + c - 'A';
-  if (c == ':') return 37;
-  if (c == '/') return 38;
-  if (c == '-') return 39;
-  if (c == '.') return 40;
-  return 0;
+  const unsigned char c = static_cast<unsigned char>(raw);
+  return c >= 32 && c <= 126 ? c - 32 : '?' - 32;
+}
+
+bool inClip(const Rect& clip, int x, int y) {
+  return x >= clip.x && y >= clip.y && x < clip.x + clip.w && y < clip.y + clip.h;
 }
 
 void line(uint8_t* fb, int x1, int y1, int x2, int y2, uint8_t color) {
@@ -40,23 +48,53 @@ void roundedRect(uint8_t* fb, Rect r, int radius, uint8_t fill, uint8_t stroke) 
   epd_fill_circle(r.x + r.w - radius - 1, r.y + radius, radius, fill, fb);
   epd_fill_circle(r.x + radius, r.y + r.h - radius - 1, radius, fill, fb);
   epd_fill_circle(r.x + r.w - radius - 1, r.y + r.h - radius - 1, radius, fill, fb);
-  if (stroke != fill) epd_draw_rect({r.x, r.y, r.w, r.h}, stroke, fb);
+  if (stroke != fill) {
+    // Two logical pixels map to at least two physical panel pixels in portrait.
+    epd_draw_rect({r.x, r.y, r.w, r.h}, stroke, fb);
+    if (r.w > 2 && r.h > 2) epd_draw_rect({r.x + 1, r.y + 1, r.w - 2, r.h - 2}, stroke, fb);
+  }
 }
 
-int textWidth(const String& value, int scale) { return value.length() * 6 * scale; }
+int textWidth(const String& value, FontRole role) {
+  const fonts::Font& font = fontFor(role);
+  int width = 0;
+  for (char c : value) width += font.glyphs[glyphIndex(c)].advance;
+  return width;
+}
 
-void text(uint8_t* fb, int x, int y, const String& value, int scale, uint8_t color, int maxWidth) {
-  const int limit = maxWidth > 0 ? x + maxWidth : kCanvasWidth;
+int textHeight(FontRole role) { return fontFor(role).lineHeight; }
+
+bool textFits(const String& value, FontRole role, Rect region) {
+  return textWidth(value, role) <= region.w && textHeight(role) <= region.h;
+}
+
+void text(uint8_t* fb, Rect clip, int x, int baseline, const String& value, FontRole role, uint8_t color) {
+  const fonts::Font& font = fontFor(role);
   for (char c : value) {
-    if (x + 5 * scale > limit) break;
-    const int index = glyphIndex(c);
-    for (int col = 0; col < 5; ++col) {
-      for (int row = 0; row < 7; ++row) {
-        if (kFont[index][col] & (1 << row))
-          epd_fill_rect({x + col * scale, y + row * scale, scale, scale}, color, fb);
+    const fonts::Glyph& glyph = font.glyphs[glyphIndex(c)];
+    const int gx = x + glyph.xOffset;
+    const int gy = baseline + glyph.yOffset;
+    const int pixels = glyph.width * glyph.height;
+    for (int pixel = 0; pixel < pixels; ++pixel) {
+      const uint8_t packed = font.bitmap[glyph.offset + pixel / 2];
+      const uint8_t coverage = pixel % 2 ? packed >> 4 : packed & 0x0F;
+      if (coverage != 0) {
+        const int px = gx + pixel % glyph.width;
+        const int py = gy + pixel / glyph.width;
+        // Coverage is applied once in nibble space. A black foreground maps
+        // coverage 15 to exact framebuffer nibble 0; white foreground inverts.
+        const uint8_t foreground = color >> 4;
+        const uint8_t paper = foreground == 0 ? 15 : 0;
+        // Keep both products non-negative. The previous signed-delta form
+        // rounded a fully covered black pixel to nibble 1 because C++ integer
+        // division truncates negative values toward zero.
+        const uint8_t nibble = static_cast<uint8_t>(
+            (paper * (15 - coverage) + foreground * coverage + 7) / 15);
+        if (inClip(clip, px, py)) epd_draw_pixel(px, py, nibble * 0x11, fb);
       }
     }
-    x += 6 * scale;
+    x += glyph.advance;
+    if (x >= clip.x + clip.w) break;
   }
 }
 
@@ -74,7 +112,10 @@ void icon(uint8_t* fb, Icon value, int cx, int cy, int s, uint8_t color) {
     case Icon::Location:
       epd_draw_circle(cx,cy-h/3,h/2,color,fb); line(fb,cx-h/2,cy,cx,cy+h,color); line(fb,cx,cy+h,cx+h/2,cy,color); break;
     case Icon::Device:
-      roundedRect(fb,{cx-h,cy-h,s,s},4,kPaper,color); epd_fill_circle(cx,cy,3,color,fb); break;
+      // A single outline keeps DEVICE at the same optical weight as the other
+      // navigation glyphs. The card helper intentionally uses a two-pixel
+      // border and also filled the active inverse icon's interior.
+      epd_draw_rect({cx-h,cy-h,s,s},color,fb); epd_fill_circle(cx,cy,3,color,fb); break;
     case Icon::Battery:
       epd_draw_rect({cx-h,cy-h/2,s-3,h},color,fb); epd_fill_rect({cx+h-2,cy-3,3,6},color,fb); break;
     case Icon::Lock:
@@ -86,82 +127,123 @@ void icon(uint8_t* fb, Icon value, int cx, int cy, int s, uint8_t color) {
   }
 }
 
+void circle(uint8_t* fb, int cx, int cy, int radius, uint8_t color) {
+  epd_draw_circle(cx, cy, radius, color, fb);
+}
+
 void appBar(uint8_t* fb, const UiSnapshot& state, const char* section) {
   epd_fill_rect({0,0,kCanvasWidth,kAppBarHeight},kPaper,fb);
-  text(fb,kMargin,20,"support",2,kInkMuted); text(fb,kMargin+84,16,"FORGE",3,kInk);
-  text(fb,kMargin,54,section ? section : "FIELD TERMINAL",2,kInkMuted);
-  String time = state.rtcValid ? String(state.hour < 10 ? "0" : "") + state.hour + ":" +
-                (state.minute < 10 ? "0" : "") + state.minute : "--:--";
-  text(fb,420,21,time,2,kInk,96);
-  String date = state.rtcValid ? String(state.month < 10 ? "0" : "") + state.month + "/" +
-                (state.day < 10 ? "0" : "") + state.day : "--/--";
-  text(fb,420,49,date,1,kInkMuted,48);
-  icon(fb,Icon::Battery,484,67,26,kInk); text(fb,502,60,"--",1,kInkMuted,24);
+  const Rect brandClip{kMargin, 0, 294, kAppBarHeight - 1};
+  const Rect clockClip{326, 0, 132, kAppBarHeight - 1};
+  const Rect batteryClip{462, 0, 66, kAppBarHeight - 1};
+  text(fb,brandClip,kMargin,38,"supportFORGE",FontRole::Brand,kInk);
+  // The product subtitle is invariant. Page names belong to page content, never
+  // in the brand/status header where they could recreate the photographed overlap.
+  (void)section;
+  text(fb,brandClip,kMargin,70,"FIELD TERMINAL",FontRole::Body,kInkMuted);
+  String time = "--:--";
+  if (state.rtcValid) {
+    uint8_t shownHour = state.hour;
+    String suffix;
+    if (!state.use24Hour) {
+      suffix = state.hour >= 12 ? " PM" : " AM";
+      shownHour = state.hour % 12;
+      if (!shownHour) shownHour = 12;
+    }
+    time = String((state.use24Hour && shownHour < 10) ? "0" : "") + shownHour + ":" +
+           (state.minute < 10 ? "0" : "") + state.minute + suffix;
+  }
+  const int timeX = clockClip.x + clockClip.w - textWidth(time,FontRole::CardHeading);
+  text(fb,clockClip,max(clockClip.x,timeX),32,time,FontRole::CardHeading,kInk);
+  String date = state.rtcValid ? String(state.year) + "-" +
+      (state.month < 10 ? "0" : "") + state.month + "-" +
+      (state.day < 10 ? "0" : "") + state.day : "TIME SYNC";
+  const int dateX = clockClip.x + clockClip.w - textWidth(date,FontRole::Caption);
+  text(fb,clockClip,max(clockClip.x,dateX),68,date,FontRole::Caption,kInkMuted);
+  icon(fb,Icon::Battery,492,28,28,kInk);
+  const String battery = state.batteryPercentAvailable ? String(state.batteryPercent)+"%" : "--";
+  const int batteryX = batteryClip.x + (batteryClip.w-textWidth(battery,FontRole::Caption))/2;
+  text(fb,batteryClip,max(batteryClip.x,batteryX),67,battery,FontRole::Caption,kInkMuted);
   epd_draw_hline(0,kAppBarHeight-1,kCanvasWidth,kRule,fb);
 }
 
 void card(uint8_t* fb, Rect b, const char* eyebrow, const String& title, const String& body) {
   roundedRect(fb,b,12,kSurfaceSoft,kRule);
-  text(fb,b.x+20,b.y+18,eyebrow,1,kInkMuted,b.w-40);
-  text(fb,b.x+20,b.y+44,title,3,kInk,b.w-40);
-  if (body.length()) text(fb,b.x+20,b.y+78,body,2,kInkMuted,b.w-40);
+  const Rect clip{b.x+18,b.y+12,b.w-36,b.h-24};
+  text(fb,clip,clip.x,b.y+31,eyebrow,FontRole::Caption,kInkMuted);
+  text(fb,clip,clip.x,b.y+61,title,FontRole::PageHeading,kInk);
+  if (body.length()) text(fb,clip,clip.x,b.y+91,body,FontRole::Body,kInkMuted);
 }
 
 void statusPill(uint8_t* fb, Rect b, const String& label, bool dark) {
   roundedRect(fb,b,b.h/2,dark?kInk:kSurfaceStrong,dark?kInk:kRule);
-  const int scale=1; const int tx=b.x+max(8,(b.w-textWidth(label,scale))/2);
-  text(fb,tx,b.y+(b.h-7*scale)/2,label,scale,dark?kPaper:kInk,b.w-16);
+  const int tx=b.x+max(8,(b.w-textWidth(label,FontRole::Caption))/2);
+  text(fb,{b.x+8,b.y,b.w-16,b.h},tx,b.y+(b.h+fonts::kCaption.ascent-fonts::kCaption.descent)/2,
+       label,FontRole::Caption,dark?kPaper:kInk);
 }
 
 void metricTile(uint8_t* fb, Rect b, Icon glyph, const char* label, const String& value, const String& detail) {
   roundedRect(fb,b,10,kPaper,kRule); icon(fb,glyph,b.x+28,b.y+28,22,kInk);
-  text(fb,b.x+50,b.y+21,label,1,kInkMuted,b.w-60);
-  text(fb,b.x+16,b.y+55,value,2,kInk,b.w-32);
-  if (detail.length()) text(fb,b.x+16,b.y+82,detail,1,kInkMuted,b.w-32);
+  const Rect clip{b.x+14,b.y+8,b.w-28,b.h-16};
+  text(fb,clip,b.x+48,b.y+31,label,FontRole::Caption,kInkMuted);
+  text(fb,clip,b.x+16,b.y+67,value,FontRole::CardHeading,kInk);
+  if (detail.length()) text(fb,clip,b.x+16,b.y+94,detail,FontRole::Caption,kInkMuted);
 }
 
 void labeledRow(uint8_t* fb, Rect b, const char* label, const String& value, bool divider) {
-  text(fb,b.x,b.y+20,label,2,kInkMuted,b.w/2);
-  const int w=textWidth(value,2); text(fb,max(b.x+b.w/2,b.x+b.w-w),b.y+20,value,2,kInk,b.w/2);
+  const Rect labelClip{b.x,b.y,b.w/2-8,b.h-2};
+  const Rect valueClip{b.x+b.w/2,b.y,b.w/2,b.h-2};
+  text(fb,labelClip,b.x,b.y+31,label,FontRole::Body,kInkMuted);
+  const int w=textWidth(value,FontRole::Body);
+  text(fb,valueClip,max(valueClip.x,b.x+b.w-w),b.y+31,value,FontRole::Body,kInk);
   if (divider) epd_draw_hline(b.x,b.y+b.h-1,b.w,kRule,fb);
 }
 
 void emptyState(uint8_t* fb, Rect b, Icon glyph, const String& title, const String& body) {
   roundedRect(fb,b,14,kSurfaceSoft,kRule); icon(fb,glyph,b.x+b.w/2,b.y+64,42,kInk);
-  int tx=b.x+(b.w-textWidth(title,2))/2; text(fb,max(b.x+16,tx),b.y+108,title,2,kInk,b.w-32);
-  tx=b.x+(b.w-textWidth(body,1))/2; text(fb,max(b.x+16,tx),b.y+144,body,1,kInkMuted,b.w-32);
+  const Rect clip{b.x+16,b.y+16,b.w-32,b.h-32};
+  int tx=b.x+(b.w-textWidth(title,FontRole::CardHeading))/2;
+  text(fb,clip,max(clip.x,tx),b.y+122,title,FontRole::CardHeading,kInk);
+  tx=b.x+(b.w-textWidth(body,FontRole::Body))/2;
+  text(fb,clip,max(clip.x,tx),b.y+154,body,FontRole::Body,kInkMuted);
 }
 
 void dialog(uint8_t* fb, Rect b, const String& title, const String& body,
             const String& actionLabel) {
   epd_fill_rect({0, 0, kCanvasWidth, kCanvasHeight}, kSurface, fb);
   roundedRect(fb, b, 14, kPaper, kInk);
-  text(fb, b.x + 24, b.y + 28, title, 3, kInk, b.w - 48);
-  text(fb, b.x + 24, b.y + 76, body, 2, kInkMuted, b.w - 48);
+  const Rect clip{b.x+24,b.y+20,b.w-48,b.h-40};
+  text(fb,clip,clip.x,b.y+54,title,FontRole::PageHeading,kInk);
+  text(fb,clip,clip.x,b.y+92,body,FontRole::Body,kInkMuted);
   const Rect action{b.x + 24, b.y + b.h - 76, b.w - 48, 52};
   roundedRect(fb, action, 10, kInk, kInk);
-  text(fb, action.x + max(12, (action.w - textWidth(actionLabel, 2)) / 2),
-       action.y + 18, actionLabel, 2, kPaper, action.w - 24);
+  text(fb,{action.x+12,action.y,action.w-24,action.h},
+       action.x+max(12,(action.w-textWidth(actionLabel,FontRole::Body))/2),action.y+33,
+       actionLabel,FontRole::Body,kPaper);
 }
 
 Rect navigationTarget(Page page) {
   int index=0;
-  switch(page){case Page::Home:index=0;break;case Page::Systems:index=1;break;case Page::Radio:index=2;break;case Page::Location:index=3;break;case Page::Device:case Page::Diagnostics:index=4;break;}
-  return {index*108,kContentBottom,108,kNavHeight};
+  switch(page){case Page::Home:index=0;break;case Page::Systems:index=1;break;case Page::Radio:index=2;break;case Page::Location:index=3;break;case Page::Device:case Page::Diagnostics:case Page::DisplayCalibration:case Page::TextQualification:case Page::Settings:case Page::TouchSetup:index=4;break;}
+  return {index*spec::kNavItemWidth,kContentBottom,spec::kNavItemWidth,kNavHeight};
 }
 
 void bottomNavigation(uint8_t* fb, Page selected) {
   epd_fill_rect({0,kContentBottom,kCanvasWidth,kNavHeight},kPaper,fb);
-  epd_draw_hline(0,kContentBottom,kCanvasWidth,kInk,fb);
+  epd_fill_rect({0,kContentBottom,kCanvasWidth,3},kInk,fb);
   const Page pages[]={Page::Home,Page::Systems,Page::Radio,Page::Location,Page::Device};
   const Icon icons[]={Icon::Home,Icon::Systems,Icon::Radio,Icon::Location,Icon::Device};
   const char* labels[]={"HOME","SYSTEMS","RADIO","LOCATION","DEVICE"};
   for(int i=0;i<5;++i){
-    const bool active=(selected==pages[i])||(selected==Page::Diagnostics&&i==4);
-    if(active) epd_fill_rect({i*108,kContentBottom+1,108,5},kInk,fb);
-    icon(fb,icons[i],i*108+54,kContentBottom+35,24,active?kInk:kInkMuted);
-    const int x=i*108+(108-textWidth(labels[i],1))/2;
-    text(fb,x,kContentBottom+67,labels[i],1,active?kInk:kInkMuted,104);
+    const bool active=(selected==pages[i])||((selected==Page::Diagnostics||selected==Page::DisplayCalibration||selected==Page::TextQualification||selected==Page::Settings||selected==Page::TouchSetup)&&i==4);
+    const Rect target{i*spec::kNavItemWidth,kContentBottom,spec::kNavItemWidth,kNavHeight};
+    epd_fill_rect({target.x,kContentBottom+3,target.w,kNavHeight-3},active?kInk:kPaper,fb);
+    epd_draw_rect({target.x,kContentBottom+3,target.w,kNavHeight-3},kInk,fb);
+    epd_draw_rect({target.x+1,kContentBottom+4,target.w-2,kNavHeight-5},kInk,fb);
+    icon(fb,icons[i],target.x+54,kContentBottom+39,28,active?kPaper:kInk);
+    const int x=target.x+(target.w-textWidth(labels[i],FontRole::Navigation))/2;
+    text(fb,{target.x+3,kContentBottom+54,target.w-6,39},x,kContentBottom+80,
+         labels[i],FontRole::Navigation,active?kPaper:kInk);
   }
 }
 

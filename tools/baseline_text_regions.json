@@ -1,0 +1,10 @@
+{
+  "supportFORGE": {"dump": "artifacts/baseline-home.bin", "bounds": [24, 8, 196, 30]},
+  "FIELD TERMINAL": {"dump": "artifacts/baseline-home.bin", "bounds": [24, 54, 127, 16]},
+  "SETUP REQUIRED": {"dump": "artifacts/baseline-home.bin", "bounds": [44, 172, 174, 24]},
+  "SYSTEMS": {"dump": "artifacts/baseline-home.bin", "bounds": [40, 323, 67, 15]},
+  "RADIO": {"dump": "artifacts/baseline-home.bin", "bounds": [44, 725, 49, 15]},
+  "LOCATION": {"dump": "artifacts/baseline-home.bin", "bounds": [44, 677, 76, 15]},
+  "DEVICE": {"dump": "artifacts/baseline-home.bin", "bounds": [454, 934, 64, 12]},
+  "UI QUAL 3": {"dump": "artifacts/baseline-diagnostics.bin", "bounds": [410, 132, 74, 14]}
+}
