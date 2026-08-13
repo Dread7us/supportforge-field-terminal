@@ -11,12 +11,14 @@
 #include "board_profile.h"
 #include "app_config.h"
 #include "input/touch_controller.h"
+#include "location/gps_manager.h"
 #include "battery/battery_manager.h"
 #include "telemetry/telemetry_manager.h"
 #include "time/time_service.h"
 #include "ui/ui_components.h"
 #include "ui/ui_controller.h"
 #include "weather/weather_manager.h"
+#include "weather/weather_wizard.h"
 
 // UiSnapshot intentionally contains bounded Guardian, weather, time, and
 // hardware state. Give Arduino's loop task enough stack for those value
@@ -51,11 +53,15 @@ telemetry::TelemetryManager telemetryManager;
 battery::BatteryManager batteryManager;
 device_time::TimeService timeService;
 weather::WeatherManager weatherManager;
+location::GpsManager gpsManager(gpsSerial);
+weather::WeatherWizard weatherWizard;
+ui::Page weatherWizardReturnPage = ui::Page::Home;
 uint8_t systemsSection = 0;
 uint32_t observedTelemetryVersion = 0;
 uint32_t observedTimeVersion = 0;
 uint32_t observedWeatherVersion = 0;
 uint32_t observedBatteryVersion = 0;
+uint32_t observedGpsVersion = 0;
 
 ui::Presence presence(bool observed) {
   return observed ? ui::Presence::Observed : ui::Presence::Unknown;
@@ -92,6 +98,12 @@ ui::UiSnapshot makeUiSnapshot() {
   state.timezoneIndex = clock.timezoneIndex;
   state.lastSuccessfulTimeSync = clock.lastSuccessfulSync;
   state.weather = weatherManager.snapshot();
+  state.weatherWizard = weatherWizard.snapshot();
+  state.location = gpsManager.snapshot();
+  state.gps = state.location.state == location::GpsState::Off ? ui::Presence::Unknown :
+              (state.location.state == location::GpsState::Error ? ui::Presence::NotPresent : ui::Presence::Observed);
+  state.gpsFix = state.location.fixValid;
+  state.gpsSatellites = state.location.satellitesValid ? state.location.satellites : 0;
   state.configured = appconfig::configured();
   state.telemetry = telemetryManager.snapshot();
   state.nextPollSeconds = telemetryManager.nextPollInSeconds(millis());
@@ -262,6 +274,7 @@ bool setSharedRail(bool enabled) {
     return false;
   }
   sharedRailEnabled = enabled;
+  gpsManager.setRailEnabled(enabled);
   delay(20);
   printResult("shared_rail", "COMMAND_ACCEPTED",
               enabled ? "candidate P0.0 driven high" : "candidate P0.0 driven low");
@@ -404,6 +417,7 @@ bool requestNamedPage(const String& name) {
   else if (name == "calibration" || name == "display calibration") page = ui::Page::DisplayCalibration;
   else if (name == "text qualification") page = ui::Page::TextQualification;
   else if (name == "settings") page = ui::Page::Settings;
+  else if (name == "weather setup") page = ui::Page::WeatherSetup;
   else return false;
   if (!uiController.requestPage(page, millis())) {
     printResult("ui", "RATE_LIMITED", "page unchanged or refresh cooldown active");
@@ -424,6 +438,7 @@ bool namedPage(const String& name, ui::Page& page) {
   else if (name == "text qualification") page = ui::Page::TextQualification;
   else if (name == "settings") page = ui::Page::Settings;
   else if (name == "touch setup") page = ui::Page::TouchSetup;
+  else if (name == "weather setup") page = ui::Page::WeatherSetup;
   else return false;
   return true;
 }
@@ -504,6 +519,7 @@ void setup() {
               String(psramBytes) + " bytes reported by runtime");
   identifyI2c();
   batteryManager.begin(gaugeObserved);
+  gpsManager.begin(false);
   timeService.begin(rtcObserved);
   touchController.begin();
   if (bootPreferences.begin("sf_boot", false)) {
@@ -550,6 +566,9 @@ void setup() {
 void loop() {
   if (Serial.available()) processCommand(Serial.readStringUntil('\n'));
   const uint32_t now = millis();
+  gpsManager.poll(now);
+  const location::Snapshot gpsState = gpsManager.snapshot();
+  weatherManager.setGpsPosition(location::currentFixUsable(gpsState), gpsState.latitude, gpsState.longitude);
   const uint32_t latestTelemetryVersion = telemetryManager.version();
   const telemetry::Snapshot telemetryState = telemetryManager.snapshot();
   timeService.poll(now, telemetryState.wifiState == telemetry::WifiState::Connected ||
@@ -558,14 +577,17 @@ void loop() {
   const uint32_t latestTimeVersion = timeService.version();
   const uint32_t latestWeatherVersion = weatherManager.version();
   const uint32_t latestBatteryVersion = batteryManager.version();
+  const uint32_t latestGpsVersion = gpsManager.version();
   if (latestTelemetryVersion != observedTelemetryVersion ||
       latestTimeVersion != observedTimeVersion ||
       latestWeatherVersion != observedWeatherVersion ||
-      latestBatteryVersion != observedBatteryVersion) {
+      latestBatteryVersion != observedBatteryVersion ||
+      latestGpsVersion != observedGpsVersion) {
     observedTelemetryVersion = latestTelemetryVersion;
     observedTimeVersion = latestTimeVersion;
     observedWeatherVersion = latestWeatherVersion;
     observedBatteryVersion = latestBatteryVersion;
+    observedGpsVersion = latestGpsVersion;
     syncUiState();
     if (uiController.dirty() && !uiController.inputBlocked(now)) testDisplay();
   }
@@ -588,7 +610,18 @@ void loop() {
     }
   } else if (action.type == input::ActionType::Tap) {
     ui::Page destination = uiController.page();
-    if (ui::kNavBounds.contains(action.point.x, action.point.y)) {
+    if (uiController.page() == ui::Page::WeatherSetup) {
+      const weather::WizardResult result = weatherWizard.tap(
+          {action.point.x, action.point.y, 1, 1}, gpsManager.snapshot(), weatherManager);
+      if (result == weather::WizardResult::Saved || result == weather::WizardResult::Cancelled) {
+        destination = weatherWizardReturnPage;
+      }
+      syncUiState();
+      uiController.forceDirty();
+      if (destination != uiController.page()) uiController.requestPage(destination, millis());
+      testDisplay();
+      return;
+    } else if (ui::kNavBounds.contains(action.point.x, action.point.y)) {
       const int index = action.point.x / ui::spec::kNavItemWidth;
       const ui::Page pages[] = {ui::Page::Home, ui::Page::Systems, ui::Page::Radio,
                                 ui::Page::Location, ui::Page::Device};
@@ -625,6 +658,36 @@ void loop() {
       timeService.requestSync();
       syncUiState();
       testDisplay();
+    } else if (uiController.page() == ui::Page::Home &&
+               ui::kHomeWeatherAction.contains(action.point.x, action.point.y) &&
+               !weatherManager.snapshot().configured) {
+      weatherWizardReturnPage = ui::Page::Home;
+      weatherWizard.open();
+      syncUiState();
+      destination = ui::Page::WeatherSetup;
+    } else if (uiController.page() == ui::Page::Location &&
+               ui::kLocationGpsPowerAction.contains(action.point.x, action.point.y)) {
+      if (gpsManager.snapshot().state != location::GpsState::Off) gpsManager.setRailEnabled(false);
+      else if (!sharedRailEnabled) setSharedRail(true);
+      else gpsManager.setRailEnabled(true);
+      syncUiState(); uiController.forceDirty(); testDisplay();
+    } else if (uiController.page() == ui::Page::Location &&
+               ui::kLocationSpeedUnitAction.contains(action.point.x, action.point.y)) {
+      gpsManager.toggleSpeedUnit(); syncUiState(); testDisplay();
+    } else if (uiController.page() == ui::Page::Location &&
+               ui::kLocationPrivacyAction.contains(action.point.x, action.point.y)) {
+      gpsManager.toggleCoordinateVisibility(); syncUiState(); testDisplay();
+    } else if (uiController.page() == ui::Page::Location &&
+               ui::kLocationWeatherSetupAction.contains(action.point.x, action.point.y)) {
+      weatherWizardReturnPage=ui::Page::Location;weatherWizard.open();syncUiState();destination=ui::Page::WeatherSetup;
+    } else if (uiController.page() == ui::Page::Location &&
+               ui::kLocationWeatherRefreshAction.contains(action.point.x, action.point.y)) {
+      weatherManager.requestRefresh(now);syncUiState();uiController.forceDirty();testDisplay();
+    } else if (uiController.page() == ui::Page::Settings &&
+               ui::kSettingsWeatherAction.contains(action.point.x, action.point.y)) {
+      weatherWizardReturnPage=ui::Page::Settings;
+      weatherWizard.open();
+      syncUiState();destination=ui::Page::WeatherSetup;
     } else if (uiController.page() == ui::Page::Systems &&
                ui::kSystemsSectionAction.contains(action.point.x, action.point.y)) {
       systemsSection = (systemsSection + 1) % 4;

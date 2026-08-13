@@ -57,9 +57,18 @@ String batteryStatus(const UiSnapshot& s) {
 
 String weatherTemperature(const UiSnapshot& s) {
   if (!s.weather.dataAvailable) return "--";
-  return String(s.weather.temperatureTenths / 10.0f, 0) +
-      ((appconfig::kWeatherUnit[0] == 'F' || appconfig::kWeatherUnit[0] == 'f') ? " F" : " C");
+  const String unit=s.weather.temperatureUnit == weather::TemperatureUnit::Fahrenheit ? " F" : " C";
+  String value=String(s.weather.temperatureTenths / 10.0f, 0)+unit;
+  if(s.weather.showFeelsLike&&s.weather.feelsLikeAvailable)value+=" / FEELS "+String(s.weather.feelsLikeTenths/10.0f,0)+unit;
+  return value;
 }
+
+String gpsSpeed(const UiSnapshot& s) {
+  if (!s.location.speedValid) return String("-- ") + location::speedUnitName(s.location.speedUnit);
+  return String(location::displaySpeed(s.location.speedKmh,s.location.speedUnit),0)+" "+location::speedUnitName(s.location.speedUnit);
+}
+
+void actionButton(uint8_t* fb,Rect bounds,const String& label){roundedRect(fb,bounds,10,kPaper,kInk);text(fb,{bounds.x+12,bounds.y+12,bounds.w-24,bounds.h-20},bounds.x+16,bounds.y+42,label,FontRole::CardHeading,kInk);}
 
 String lastTimeSync(const UiSnapshot& s) {
   if (!s.lastSuccessfulTimeSync) return "--";
@@ -86,9 +95,9 @@ void home(uint8_t* fb,const UiSnapshot& s){
              t.fetchState==telemetry::FetchState::Offline?"OFFLINE":(t.consecutiveFailedCycles?"CHECK":"CLEAR"),failureDetail(t));
   roundedRect(fb,contractRect(spec::kHomeCards[5]),12,kPaper,kRule);
   text(fb,{44,574,452,30},44,596,"FIELD CONDITIONS",FontRole::Caption,kInkMuted);
-  labeledRow(fb,{44,610,452,48},"WEATHER",s.weather.dataAvailable?weather::conditionName(s.weather.weatherCode):weather::stateName(s.weather.state));
-  labeledRow(fb,{44,658,452,48},"TEMPERATURE",weatherTemperature(s));
-  labeledRow(fb,{44,706,452,48},"CITY",s.weather.dataAvailable?String(s.weather.city):"--");
+  labeledRow(fb,{44,610,452,48},"WEATHER",s.weather.dataAvailable&&s.weather.showCondition?weather::conditionName(s.weather.weatherCode):weather::stateName(s.weather.state));
+  labeledRow(fb,{44,658,452,48},"TEMPERATURE",s.weather.showTemperature?weatherTemperature(s):"HIDDEN");
+  labeledRow(fb,{44,706,452,48},"CITY",s.weather.showCity&&s.weather.city[0]?String(s.weather.city):"--");
   labeledRow(fb,{44,754,452,48},"TERMINAL BATTERY",batteryStatus(s),false);
 }
 
@@ -140,12 +149,25 @@ void radioPage(uint8_t* fb,const UiSnapshot& s){
 }
 
 void location(uint8_t* fb,const UiSnapshot& s){
-  const Rect* c=reinterpret_cast<const Rect*>(spec::kLocationCards);
-  appBar(fb,s,"LOCATION"); card(fb,c[0],"L76K GNSS",s.gpsFix?"FIX ACQUIRED":observed(s.gps),s.gpsFix?"Navigation data available locally":"Waiting for qualified satellite data");
-  roundedRect(fb,c[1],12,kPaper,kRule);
-  labeledRow(fb,{44,328,452,52},"MODULE",observed(s.gps)); labeledRow(fb,{44,380,452,52},"FIX",s.gpsFix?"VALID":"NO FIX");
-  labeledRow(fb,{44,432,452,52},"SATELLITES",s.gpsSatellites?String(s.gpsSatellites):"--"); labeledRow(fb,{44,484,452,52},"COORDINATES","PRIVATE",false);
-  emptyState(fb,c[2],Icon::Location,"NO WAYPOINTS","Navigation tools are planned for a future release");
+  appBar(fb,s,"LOCATION");
+  card(fb,{24,128,492,138},"L76K GPS",String("GPS ")+location::stateName(s.location.state),
+       s.location.state==location::GpsState::Fixed?"Current receiver fix":"No guessed location or speed");
+  roundedRect(fb,{24,282,492,276},12,kPaper,kRule);
+  labeledRow(fb,{44,292,452,38},"SPEED",gpsSpeed(s));
+  labeledRow(fb,{44,330,452,38},"MOVEMENT",location::movementName(s.location.movement));
+  labeledRow(fb,{44,368,452,38},"SATELLITES",s.location.satellitesValid?String(s.location.satellites):"--");
+  labeledRow(fb,{44,406,452,38},"HDOP",s.location.hdopValid?String(s.location.hdopHundredths/100.0f,1):"--");
+  labeledRow(fb,{44,444,452,38},"FIX AGE",s.location.fixValid?String(s.location.fixAgeMs/1000)+" SEC":"--");
+  labeledRow(fb,{44,482,452,38},"WEATHER LOC",s.weather.source==weather::LocationSource::Gps?"GPS AUTO":"AUTO OFF");
+  String position="PRIVATE";
+  if(s.location.showCoordinates&&s.location.fixValid)position=String(s.location.latitude,4)+", "+String(s.location.longitude,4);
+  if(s.location.showCoordinates&&s.location.fixValid)labeledRow(fb,{44,520,452,38},"COORDINATES",position,false);
+  else labeledRow(fb,{44,520,452,38},"COORDINATES","PRIVATE",false);
+  actionButton(fb,kLocationGpsPowerAction,s.location.state==location::GpsState::Off?"START GPS":"STOP GPS");
+  actionButton(fb,kLocationSpeedUnitAction,String("UNIT ")+location::speedUnitName(s.location.speedUnit));
+  actionButton(fb,kLocationPrivacyAction,s.location.showCoordinates?"HIDE COORDS":"SHOW COORDS");
+  actionButton(fb,kLocationWeatherSetupAction,"WEATHER SETUP");
+  actionButton(fb,kLocationWeatherRefreshAction,"REFRESH WEATHER NOW");
 }
 
 void device(uint8_t* fb,const UiSnapshot& s){
@@ -325,15 +347,59 @@ void settings(uint8_t* fb,const UiSnapshot& s){
   card(fb,c[1],"TIMEZONE",device_time::timezoneLabel(s.timezoneIndex),"Tap to select next");
   card(fb,c[2],"CLOCK FORMAT",s.use24Hour?"24 HOUR":"12 HOUR","Tap to toggle");
   card(fb,c[3],"LAST TIME SYNC",lastTimeSync(s),s.lastSuccessfulTimeSync?"Local display time":"No successful NTP sync");
-  card(fb,c[4],"SYNC STATUS",device_time::syncStateName(s.timeSyncState),"Tap to request NTP");
+  card(fb,{24,642,492,82},"SYNC STATUS",device_time::syncStateName(s.timeSyncState),"Tap to request NTP");
+  actionButton(fb,kSettingsWeatherAction,"WEATHER SETUP & DISPLAY");
+}
+
+void weatherSetup(uint8_t* fb,const UiSnapshot& s){
+  const weather::WizardSnapshot&w=s.weatherWizard;
+  clear(fb);text(fb,{24,20,492,54},24,52,"WEATHER SETUP",FontRole::PageHeading,kInk);
+  actionButton(fb,{24,112,112,56},"BACK");
+  if(w.step==weather::WizardStep::Choice){
+    text(fb,{24,74,492,30},24,96,"WEATHER LOCATION",FontRole::CardHeading,kInk);
+    actionButton(fb,{150,112,366,56},"DISPLAY PREFERENCES");
+    const char* labels[]={"USE GPS","SEARCH CITY","ZIP / POSTAL","ENTER COORDINATES","DISABLE WEATHER"};
+    for(int i=0;i<5;++i)actionButton(fb,{24,176+i*118,492,110},labels[i]);
+  }else if(w.step==weather::WizardStep::Gps){
+    card(fb,{24,190,492,220},"USE GPS","WEATHER FOLLOWS THIS TERMINAL",String("GPS ")+location::stateName(s.location.state));
+    text(fb,{44,430,452,80},44,458,"A VALID CURRENT FIX IS REQUIRED. COORDINATES STAY HIDDEN.",FontRole::Body,kInk);
+    actionButton(fb,{24,780,238,64},"CANCEL");actionButton(fb,{278,780,238,64},"CONTINUE");
+  }else if(w.step==weather::WizardStep::Input){
+    const char* value=w.inputKind==weather::InputKind::Latitude?w.latitude:(w.inputKind==weather::InputKind::Longitude?w.longitude:w.input);
+    card(fb,{24,176,492,50},weather::inputKindName(w.inputKind),value[0]?value:"--",
+         w.inputKind==weather::InputKind::Postal?String("COUNTRY ")+w.country:"");
+    const char* chars=weather::pickerCharacters(w.inputKind,w.characterPage);
+    for(int row=0;row<5;++row)for(int col=0;col<6;++col){Rect key{24+col*82,238+row*84,78,76};roundedRect(fb,key,8,kPaper,kInk);char label[2]{chars[row*6+col],0};if(label[0]!=' ')text(fb,key,key.x+26,key.y+48,label,FontRole::CardHeading,kInk);}
+    actionButton(fb,{24,682,150,64},"PAGE");actionButton(fb,{195,682,150,64},"DELETE");actionButton(fb,{366,682,150,64},w.inputKind==weather::InputKind::Postal?String("COUNTRY ")+w.country:"SPACE");
+    actionButton(fb,{24,780,238,64},"CANCEL");actionButton(fb,{278,780,238,64},w.inputKind==weather::InputKind::Longitude?"CONFIRM":"NEXT");
+  }else if(w.step==weather::WizardStep::Results){
+    text(fb,{24,178,492,34},24,202,s.weather.searchState==weather::SearchState::Pending?"SEARCHING...":"SELECT A RESULT",FontRole::CardHeading,kInk);
+    for(uint8_t i=0;i<s.weather.resultCount&&i<5;++i)actionButton(fb,{24,220+i*100,492,88},s.weather.results[i].label);
+    actionButton(fb,{24,780,238,64},"CANCEL");
+  }else if(w.step==weather::WizardStep::Confirm){
+    String source=weather::sourceName(w.pendingSource);String label=source;
+    if((w.pendingSource==weather::LocationSource::City||w.pendingSource==weather::LocationSource::Postal)&&w.selectedResult<s.weather.resultCount)label=s.weather.results[w.selectedResult].label;
+    card(fb,{24,190,492,220},"CONFIRM LOCATION",label,String("SOURCE ")+source);
+    text(fb,{44,438,452,100},44,466,w.pendingSource==weather::LocationSource::Manual?"COORDINATES WILL BE SENT TO THE WEATHER PROVIDER.":"NO WEATHER REQUEST UNTIL YOU SAVE.",FontRole::Body,kInk);
+    actionButton(fb,{24,780,238,64},"CANCEL");actionButton(fb,{278,780,238,64},"SAVE & FETCH");
+  }else{
+    text(fb,{24,178,492,34},24,202,"WEATHER DISPLAY",FontRole::CardHeading,kInk);
+    actionButton(fb,{24,220,492,86},s.weather.temperatureUnit==weather::TemperatureUnit::Celsius?"TEMPERATURE CELSIUS":"TEMPERATURE FAHRENHEIT");
+    actionButton(fb,{24,322,492,86},s.weather.showTemperature?"CURRENT TEMP ON":"CURRENT TEMP OFF");
+    actionButton(fb,{24,424,492,86},s.weather.showCondition?"CONDITION ON":"CONDITION OFF");
+    actionButton(fb,{24,526,492,86},s.weather.showCity?"CITY LABEL ON":"CITY LABEL OFF");
+    actionButton(fb,{24,628,492,86},s.weather.showFeelsLike?"FEELS-LIKE ON":"FEELS-LIKE OFF");
+    actionButton(fb,{24,780,238,64},"DONE");
+  }
+  if(w.error[0])text(fb,{24,746,492,28},24,770,w.error,FontRole::Caption,kInk);
 }
 
 }  // namespace
 
 void renderPage(uint8_t* fb,const UiSnapshot& s){
   clear(fb);
-  switch(s.page){case Page::Home:home(fb,s);break;case Page::Systems:systems(fb,s);break;case Page::Radio:radioPage(fb,s);break;case Page::Location:location(fb,s);break;case Page::Device:device(fb,s);break;case Page::Diagnostics:diagnostics(fb,s);break;case Page::DisplayCalibration:displayCalibration(fb,s);break;case Page::TextQualification:textQualification(fb,s);break;case Page::Settings:settings(fb,s);break;case Page::TouchSetup:touchSetup(fb,s);break;}
-  if(s.page!=Page::TouchSetup&&s.page!=Page::DisplayCalibration&&s.page!=Page::TextQualification) bottomNavigation(fb,s.page);
+  switch(s.page){case Page::Home:home(fb,s);break;case Page::Systems:systems(fb,s);break;case Page::Radio:radioPage(fb,s);break;case Page::Location:location(fb,s);break;case Page::Device:device(fb,s);break;case Page::Diagnostics:diagnostics(fb,s);break;case Page::DisplayCalibration:displayCalibration(fb,s);break;case Page::TextQualification:textQualification(fb,s);break;case Page::Settings:settings(fb,s);break;case Page::TouchSetup:touchSetup(fb,s);break;case Page::WeatherSetup:weatherSetup(fb,s);break;}
+  if(s.page!=Page::TouchSetup&&s.page!=Page::DisplayCalibration&&s.page!=Page::TextQualification&&s.page!=Page::WeatherSetup) bottomNavigation(fb,s.page);
 }
 
 }  // namespace ui

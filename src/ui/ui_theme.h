@@ -57,6 +57,13 @@ constexpr Rect kDeviceSettingsAction = contractRect(spec::kDeviceCards[5]);
 constexpr Rect kSettingsTimezoneAction = contractRect(spec::kSettingsCards[1]);
 constexpr Rect kSettingsFormatAction = contractRect(spec::kSettingsCards[2]);
 constexpr Rect kSettingsSyncAction = contractRect(spec::kSettingsCards[4]);
+constexpr Rect kHomeWeatherAction = contractRect(spec::kHomeCards[5]);
+constexpr Rect kLocationGpsPowerAction{24, 582, 238, 72};
+constexpr Rect kLocationSpeedUnitAction{278, 582, 238, 72};
+constexpr Rect kLocationPrivacyAction{24, 670, 238, 72};
+constexpr Rect kLocationWeatherSetupAction{278, 670, 238, 72};
+constexpr Rect kLocationWeatherRefreshAction{24, 758, 492, 72};
+constexpr Rect kSettingsWeatherAction{24, 758, 492, 72};
 constexpr Rect kDiagnosticsDisplayCalibrationAction{24, 632, 492, 158};
 constexpr Rect kDiagnosticsTextQualificationAction{24, 632, 492, 158};
 

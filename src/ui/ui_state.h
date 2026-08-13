@@ -6,6 +6,8 @@
 #include "battery/battery_manager.h"
 #include "time/time_service.h"
 #include "weather/weather_manager.h"
+#include "weather/weather_wizard.h"
+#include "location/gps_manager.h"
 
 namespace ui {
 
@@ -19,7 +21,8 @@ enum class Page : uint8_t {
   DisplayCalibration,
   TextQualification,
   Settings,
-  TouchSetup
+  TouchSetup,
+  WeatherSetup
 };
 enum class Presence : uint8_t { Unknown, NotPresent, Observed };
 
@@ -54,6 +57,8 @@ struct UiSnapshot {
   uint8_t timezoneIndex = 0;
   time_t lastSuccessfulTimeSync = 0;
   weather::Snapshot weather{};
+  weather::WizardSnapshot weatherWizard{};
+  location::Snapshot location{};
   telemetry::Snapshot telemetry{};
   uint32_t nextPollSeconds = 0;
   uint8_t systemsSection = 0;

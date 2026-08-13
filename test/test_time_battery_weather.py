@@ -81,9 +81,10 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         for secret_name in ('kWeatherLatitude', 'kWeatherLongitude', 'url', 'body'):
             self.assertNotIn(secret_name, serial_lines)
         self.assertNotRegex(serial_lines, r'latitude|longitude|open-meteo|response')
-        self.assertIn('data_valid=', serial_lines)
-        self.assertIn('WEATHER configuration=NOT_CONFIGURED', serial_lines)
+        self.assertNotIn('data_valid=', serial_lines)
+        self.assertIn('WEATHER location_source=%s', serial_lines)
         self.assertIn('WEATHER configured=%s', serial_lines)
+        self.assertIn('WEATHER result=%s', serial_lines)
 
     def test_phone_header_and_settings_actions(self):
         self.assertIn('const Rect batteryClip{462, 0, 66', COMPONENTS)

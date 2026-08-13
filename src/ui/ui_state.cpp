@@ -17,6 +17,7 @@ const char* pageName(Page page) {
     case Page::TextQualification: return "TEXT_QUALIFICATION";
     case Page::Settings: return "SETTINGS";
     case Page::TouchSetup: return "TOUCH SETUP";
+    case Page::WeatherSetup: return "WEATHER SETUP";
   }
   return "HOME";
 }
@@ -55,12 +56,28 @@ bool materiallyDifferent(const UiSnapshot& a, const UiSnapshot& b) {
       (a.batteryPercentAvailable && a.batteryPercent != b.batteryPercent) ||
       a.batteryClassification != b.batteryClassification ||
       a.weather.state != b.weather.state ||
+       a.weather.source != b.weather.source ||
+       a.weather.configured != b.weather.configured ||
+       a.weather.temperatureUnit != b.weather.temperatureUnit ||
+       a.weather.showTemperature != b.weather.showTemperature ||
+       a.weather.showCondition != b.weather.showCondition ||
+       a.weather.showCity != b.weather.showCity ||
+       a.weather.showFeelsLike != b.weather.showFeelsLike ||
       a.weather.dataAvailable != b.weather.dataAvailable ||
       (a.weather.dataAvailable &&
        (a.weather.temperatureTenths != b.weather.temperatureTenths ||
         a.weather.weatherCode != b.weather.weatherCode ||
         strcmp(a.weather.city, b.weather.city))) ||
-      a.telemetry.host.available != b.telemetry.host.available ||
+       a.location.version != b.location.version ||
+       a.weatherWizard.active != b.weatherWizard.active ||
+       a.weatherWizard.step != b.weatherWizard.step ||
+       a.weatherWizard.inputKind != b.weatherWizard.inputKind ||
+       strcmp(a.weatherWizard.input, b.weatherWizard.input) ||
+       strcmp(a.weatherWizard.latitude, b.weatherWizard.latitude) ||
+       strcmp(a.weatherWizard.longitude, b.weatherWizard.longitude) ||
+       strcmp(a.weatherWizard.error, b.weatherWizard.error) ||
+       a.weatherWizard.characterPage != b.weatherWizard.characterPage ||
+       a.telemetry.host.available != b.telemetry.host.available ||
       (a.telemetry.host.available && strcmp(a.telemetry.host.value, b.telemetry.host.value)) ||
       a.telemetry.explicitSystemStatus != b.telemetry.explicitSystemStatus ||
       a.telemetry.systemStatus.available != b.telemetry.systemStatus.available ||
