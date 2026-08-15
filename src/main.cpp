@@ -106,6 +106,7 @@ ui::UiSnapshot makeUiSnapshot() {
   state.batteryPercent = battery.percent;
   state.batterySampleAttempted = battery.sampleAttempted;
   state.batterySampleValid = battery.sampleValid;
+  state.batteryChargeStatusVerified = battery.chargeStatusVerified;
   state.batteryLastSampleMs = battery.lastSampleMs;
   state.batteryLastAttemptMs = battery.lastAttemptMs;
   const device_time::Snapshot clock = timeService.snapshot();
@@ -742,9 +743,7 @@ void loop() {
   } else if (action.type == input::ActionType::Tap) {
     displayCoordinator.noteTouchAction(action.actionReadyMs, millis());
     ui::Page destination = displayCoordinator.page();
-    // The global refresh action must outrank page-local hit maps. In particular,
-    // WeatherSetup owns most of the canvas and previously consumed this visible
-    // header control as a no-op, making REFRESH DISPLAY appear inactive there.
+    // The footer utility must outrank page-local hit maps and the adjacent nav.
     if (displayCoordinator.page()!=ui::Page::DisplayRefreshConfirm &&
         displayCoordinator.page()!=ui::Page::TouchSetup &&
         ui::kGlobalRefreshAction.contains(action.point.x, action.point.y)) {

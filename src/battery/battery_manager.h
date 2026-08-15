@@ -14,6 +14,7 @@ struct Snapshot {
   uint8_t percent = 0;
   bool sampleAttempted = false;
   bool sampleValid = false;
+  bool chargeStatusVerified = false;
   uint32_t lastSampleMs = 0;
   uint32_t lastAttemptMs = 0;
   uint32_t version = 1;

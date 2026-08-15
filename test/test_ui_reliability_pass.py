@@ -38,13 +38,11 @@ class UiReliabilityPassTests(unittest.TestCase):
             fits = any(width(label, role) <= usable[0] and advances[role]["line_height"] <= usable[1]
                        for role in ("CardHeading", "Body", "Caption"))
             self.assertTrue(fits, label)
-        # The always-reachable 140x80 header action deliberately reflows the
-        # required label instead of shrinking it into an unreadable single line.
+        # The always-reachable footer utility uses one readable navigation label.
         global_control = COMPONENTS[COMPONENTS.index("void globalRefreshControlImpl"):
                                     COMPONENTS.index("int glyphIndex")]
-        self.assertIn('const String top="REFRESH", bottom="DISPLAY"', global_control)
-        self.assertLessEqual(width("REFRESH", "Caption"), 140 - 6)
-        self.assertLessEqual(width("DISPLAY", "Caption"), 140 - 6)
+        self.assertIn('const String label="REFRESH"', global_control)
+        self.assertLessEqual(width("REFRESH", "Navigation"), 100 - 6)
 
     def test_mobile_geometry_stays_inside_safe_content_and_targets_are_large(self):
         rects = {
@@ -75,7 +73,8 @@ class UiReliabilityPassTests(unittest.TestCase):
         self.assertNotRegex(PAGES.lower(), r"fade|opacity|animate|blink")
 
     def test_every_route_has_a_fitted_visible_title(self):
-        self.assertIn("section&&section[0]", COMPONENTS)
+        self.assertIn('const String subtitle="FIELD TERMINAL"', COMPONENTS)
+        self.assertIn("(void)section", COMPONENTS)
         self.assertIn("fittedText(subtitle,FontRole::Body,brandClip.w)", COMPONENTS)
         for title in ("SYSTEMS", "RADIO", "LOCATION", "DEVICE", "HARDWARE DIAGNOSTICS",
                       "SETTINGS", "WEATHER SETUP", "TOUCH SETUP", "TEXT QUALIFICATION",

@@ -55,7 +55,8 @@ class DisplayRefreshModeTests(unittest.TestCase):
 
     def test_global_manual_refresh_is_confirmed_rate_limited_and_state_safe(self):
         self.assertIn("kGlobalRefreshAction", MAIN + THEME)
-        self.assertIn("globalRefreshControl(fb)", PAGES)
+        self.assertIn("kFooterRefreshBounds", THEME)
+        self.assertIn("bottomNavigation(fb,s.page)", PAGES)
         self.assertIn("kManualRefreshLimitMs = 45000", CONTROLLER)
         self.assertIn("route=CONFIRMATION", MAIN)
         manual = CONTROLLER[CONTROLLER.index("bool DisplayCoordinator::manualFullRefresh"):
@@ -74,7 +75,7 @@ class DisplayRefreshModeTests(unittest.TestCase):
         global_route = tap.index("ui::kGlobalRefreshAction.contains")
         weather_route = tap.index("displayCoordinator.page() == ui::Page::WeatherSetup")
         self.assertLess(global_route, weather_route)
-        self.assertIn("WeatherSetup owns most of the canvas", tap)
+        self.assertIn("footer utility must outrank page-local hit maps", tap)
 
     def test_settings_back_remains_live_after_visiting_refresh_mode(self):
         self.assertNotIn("detailReturnPage=ui::Page::Settings;destination=ui::Page::DisplayRefreshMode", MAIN)

@@ -25,17 +25,27 @@ const fonts::Font& fontFor(FontRole role) {
   return fonts::kBody;
 }
 
+void line(uint8_t* fb, int x1, int y1, int x2, int y2, uint8_t color) {
+  epd_draw_line(x1, y1, x2, y2, color, fb);
+}
+
 void globalRefreshControlImpl(uint8_t* fb) {
   epd_fill_rect({kGlobalRefreshAction.x,kGlobalRefreshAction.y,
                  kGlobalRefreshAction.w,kGlobalRefreshAction.h},kPaper,fb);
   roundedRect(fb,kGlobalRefreshAction,8,kPaper,kInk);
-  const String top="REFRESH", bottom="DISPLAY";
-  const int topX=kGlobalRefreshAction.x+(kGlobalRefreshAction.w-textWidth(top,FontRole::Caption))/2;
-  const int bottomX=kGlobalRefreshAction.x+(kGlobalRefreshAction.w-textWidth(bottom,FontRole::Caption))/2;
-  text(fb,kGlobalRefreshAction,max(kGlobalRefreshAction.x+3,topX),kGlobalRefreshAction.y+30,
-       fittedText(top,FontRole::Caption,kGlobalRefreshAction.w-6),FontRole::Caption,kInk);
-  text(fb,kGlobalRefreshAction,max(kGlobalRefreshAction.x+3,bottomX),kGlobalRefreshAction.y+58,
-       fittedText(bottom,FontRole::Caption,kGlobalRefreshAction.w-6),FontRole::Caption,kInk);
+  const String label="REFRESH";
+  const int labelX=kGlobalRefreshAction.x+
+      (kGlobalRefreshAction.w-textWidth(label,FontRole::Navigation))/2;
+  // Circular-arrow utility glyph, deliberately static for e-paper.
+  epd_draw_circle(kGlobalRefreshAction.x+kGlobalRefreshAction.w/2,
+                  kGlobalRefreshAction.y+36,15,kInk,fb);
+  line(fb,kGlobalRefreshAction.x+61,kGlobalRefreshAction.y+22,
+       kGlobalRefreshAction.x+66,kGlobalRefreshAction.y+35,kInk);
+  line(fb,kGlobalRefreshAction.x+61,kGlobalRefreshAction.y+22,
+       kGlobalRefreshAction.x+48,kGlobalRefreshAction.y+25,kInk);
+  text(fb,{kGlobalRefreshAction.x+3,kGlobalRefreshAction.y+56,
+           kGlobalRefreshAction.w-6,36},max(kGlobalRefreshAction.x+3,labelX),
+       kGlobalRefreshAction.y+80,label,FontRole::Navigation,kInk);
 }
 
 int glyphIndex(char raw) {
@@ -45,10 +55,6 @@ int glyphIndex(char raw) {
 
 bool inClip(const Rect& clip, int x, int y) {
   return x >= clip.x && y >= clip.y && x < clip.x + clip.w && y < clip.y + clip.h;
-}
-
-void line(uint8_t* fb, int x1, int y1, int x2, int y2, uint8_t color) {
-  epd_draw_line(x1, y1, x2, y2, color, fb);
 }
 
 }  // namespace
@@ -223,10 +229,10 @@ void appBar(uint8_t* fb, const UiSnapshot& state, const char* section) {
   epd_fill_rect({batteryClip.x,batteryClip.y,batteryClip.w,batteryClip.h},kPaper,fb);
   const int brandBaseline = brandClip.y + fonts::kBrand.ascent;
   text(fb,brandClip,brandClip.x,brandBaseline,"supportFORGE",FontRole::Brand,kInk);
-  // Keep page identity in the dedicated brand clip. Fitting prevents a long
-  // diagnostics title from entering the clock region.
+  // Keep the stable product identity phone-like; page titles belong to content.
   const int subtitleBaseline = brandClip.y + 64;
-  const String subtitle=section&&section[0]?String(section):String("FIELD TERMINAL");
+  (void)section;
+  const String subtitle="FIELD TERMINAL";
   text(fb,brandClip,brandClip.x,subtitleBaseline,
        fittedText(subtitle,FontRole::Body,brandClip.w),FontRole::Body,kInkMuted);
   String time = "--:--";
@@ -331,20 +337,21 @@ Rect navigationTarget(Page page) {
 void bottomNavigation(uint8_t* fb, Page selected) {
   epd_fill_rect({0,kContentBottom,kCanvasWidth,kNavHeight},kPaper,fb);
   epd_fill_rect({0,kContentBottom,kCanvasWidth,3},kInk,fb);
-  const Page pages[]={Page::Home,Page::Systems,Page::Radio,Page::Location,Page::Device};
   const Icon icons[]={Icon::Home,Icon::Systems,Icon::Radio,Icon::Location,Icon::Device};
   const char* labels[]={"HOME","SYSTEMS","RADIO","LOCATION","DEVICE"};
+  const Rect selectedTarget=navigationTarget(selected);
   for(int i=0;i<5;++i){
-    const bool active=(selected==pages[i])||((selected==Page::Diagnostics||selected==Page::DisplayCalibration||selected==Page::TextQualification||selected==Page::Settings||selected==Page::TouchSetup||selected==Page::DisplayRefreshConfirm||selected==Page::Battery||selected==Page::TimezoneSetup||selected==Page::LowPowerSetup||selected==Page::LowPowerStatus)&&i==4);
     const Rect target{i*spec::kNavItemWidth,kContentBottom,spec::kNavItemWidth,kNavHeight};
+    const bool active=target.x==selectedTarget.x;
     epd_fill_rect({target.x,kContentBottom+3,target.w,kNavHeight-3},active?kInk:kPaper,fb);
     epd_draw_rect({target.x,kContentBottom+3,target.w,kNavHeight-3},kInk,fb);
     epd_draw_rect({target.x+1,kContentBottom+4,target.w-2,kNavHeight-5},kInk,fb);
-    icon(fb,icons[i],target.x+54,kContentBottom+39,28,active?kPaper:kInk);
+    icon(fb,icons[i],target.x+target.w/2,kContentBottom+39,26,active?kPaper:kInk);
     const int x=target.x+(target.w-textWidth(labels[i],FontRole::Navigation))/2;
     text(fb,{target.x+3,kContentBottom+54,target.w-6,39},x,kContentBottom+80,
          labels[i],FontRole::Navigation,active?kPaper:kInk);
   }
+  globalRefreshControlImpl(fb);
 }
 
 }  // namespace ui

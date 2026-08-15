@@ -44,7 +44,7 @@ constexpr Rect contractRect(const int (&rect)[4]) {
   return {rect[0], rect[1], rect[2], rect[3]};
 }
 
-constexpr Rect kNavBounds{0, kContentBottom, kCanvasWidth, kNavHeight};
+constexpr Rect kNavBounds{0, kContentBottom, 5 * spec::kNavItemWidth, kNavHeight};
 constexpr Rect kPrimaryContentBounds{kMargin, kAppBarHeight + 16,
                                       kCanvasWidth - 2 * kMargin,
                                       kContentBottom - kAppBarHeight - 32};
@@ -85,7 +85,7 @@ constexpr Rect kHomeStorageAction{24,706,492,48};
 constexpr Rect kHomeNetworkAction{24,658,492,48};
 constexpr Rect kHomeBatteryAction{24,610,492,48};
 constexpr Rect kHeaderBatteryAction = contractRect(spec::kHeaderBatteryBounds);
-constexpr Rect kGlobalRefreshAction = contractRect(spec::kHeaderClockBounds);
+constexpr Rect kGlobalRefreshAction = contractRect(spec::kFooterRefreshBounds);
 constexpr Rect kHeaderClockAction = contractRect(spec::kHeaderClockBounds);
 constexpr Rect kDeviceBatteryAction = contractRect(spec::kDeviceCards[0]);
 constexpr Rect kWeatherDetailSetupAction{24,690,492,64};
@@ -109,6 +109,9 @@ static_assert(kLowPowerPresetActions[4].y + kLowPowerPresetActions[4].h < kLowPo
 static_assert(kGlobalRefreshAction.w >= kMinimumTouchTarget &&
                   kGlobalRefreshAction.h >= kMinimumTouchTarget,
               "global refresh must remain a deliberate touch target");
+static_assert(kNavBounds.x + kNavBounds.w == kGlobalRefreshAction.x &&
+                  kGlobalRefreshAction.x + kGlobalRefreshAction.w == kCanvasWidth,
+              "footer navigation and refresh regions must tile the canvas");
 static_assert(kRefreshModeActions[0].h >= kMinimumTouchTarget &&
                   kRefreshModeActions[1].h >= kMinimumTouchTarget &&
                   kRefreshModeActions[2].h >= kMinimumTouchTarget &&

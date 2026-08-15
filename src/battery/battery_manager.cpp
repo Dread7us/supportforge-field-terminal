@@ -96,7 +96,10 @@ void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObse
   const bool socValid = gaugeObserved && readSoc(soc);
   const bool chargerValid = chargerObserved &&
       readRegister(kChargerAddress, kChargerStatusRegister, &chargerStatus, 1);
-  snapshot_.sampleValid = socValid && (!chargerObserved || chargerValid);
+  // SOC and charger status are independent read-only evidence. A failed charger
+  // status read must never hide a valid gauge percentage or imply charging.
+  snapshot_.sampleValid = socValid;
+  snapshot_.chargeStatusVerified = chargerValid;
   if (socValid) {
     snapshot_.percentAvailable = true;
     snapshot_.percent = static_cast<uint8_t>(soc);
@@ -105,7 +108,7 @@ void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObse
   if (!gaugeObserved) {
     snapshot_.state = State::NotPresent;
     snapshot_.percentAvailable = false;
-  } else if (!socValid || (chargerObserved && !chargerValid)) {
+  } else if (!socValid) {
     // A malformed or failed transaction is never accepted as a new sample.
     // Keep a previously validated SOC visible only while that older sample is
     // still inside the freshness bound; sampleValid remains false so the detail
@@ -122,13 +125,15 @@ void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObse
   if (before.state != snapshot_.state ||
       before.percentAvailable != snapshot_.percentAvailable ||
       (snapshot_.percentAvailable && before.percent != snapshot_.percent) ||
-      before.sampleValid != snapshot_.sampleValid) ++snapshot_.version;
+      before.sampleValid != snapshot_.sampleValid ||
+      before.chargeStatusVerified != snapshot_.chargeStatusVerified) ++snapshot_.version;
   const String percentText = snapshot_.percentAvailable ? String(snapshot_.percent) : String("--");
   const String freshnessText = snapshot_.percentAvailable ?
       String(nowMs - snapshot_.lastSampleMs) : String("--");
-  Serial.printf("BATTERY read=%s soc_valid=%s percent=%s charging=%s freshness_ms=%s\n",
+  Serial.printf("BATTERY read=%s soc_valid=%s percent=%s charge_status_verified=%s state=%s freshness_ms=%s\n",
                 snapshot_.sampleValid ? "SUCCESS" : "FAILURE",
-                socValid ? "YES" : "NO", percentText.c_str(), stateName(snapshot_.state),
+                socValid ? "YES" : "NO", percentText.c_str(),
+                chargerValid ? "YES" : "NO", stateName(snapshot_.state),
                 freshnessText.c_str());
 }
 

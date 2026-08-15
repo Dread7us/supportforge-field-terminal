@@ -251,10 +251,11 @@ void batteryDetail(uint8_t* fb,const UiSnapshot& s){
   centeredText(fb,{24,128,492,94},primary,FontRole::PageHeading);
   centeredText(fb,{24,214,492,40},battery::stateName(s.batteryState),FontRole::CardHeading);
   batteryIcon(fb,{90,294,360,124},s.batteryState,s.batteryPercentAvailable,s.batteryPercent,kInk);
-  roundedRect(fb,{24,462,492,202},14,kPaper,kInk);
+  roundedRect(fb,{24,462,492,226},14,kPaper,kInk);
   labeledRow(fb,{48,484,444,68},"STATE",battery::stateName(s.batteryState));
   labeledRow(fb,{48,552,444,68},"FRESHNESS",s.batteryLastSampleMs?age(millis(),s.batteryLastSampleMs):"--");
-  labeledRow(fb,{48,620,444,30},"SOC SOURCE",s.batterySampleValid?"BQ27220 SOC READ":"UNAVAILABLE",false);
+  labeledRow(fb,{48,620,444,30},"SOC SOURCE",s.batterySampleValid?"BQ27220 SOC READ":"UNAVAILABLE");
+  labeledRow(fb,{48,650,444,30},"CHARGE STATUS",s.batteryChargeStatusVerified?"BQ25896 VERIFIED":"UNAVAILABLE",false);
   detailBack(fb);
 }
 
@@ -743,9 +744,8 @@ void displayRefreshConfirm(uint8_t* fb,const UiSnapshot& s){
 void renderPage(uint8_t* fb,const UiSnapshot& s){
   clear(fb);
   switch(s.page){case Page::Home:home(fb,s);break;case Page::Systems:systems(fb,s);break;case Page::Radio:radioPage(fb,s);break;case Page::Location:location(fb,s);break;case Page::Device:device(fb,s);break;case Page::Diagnostics:diagnostics(fb,s);break;case Page::DisplayCalibration:displayCalibration(fb,s);break;case Page::TextQualification:textQualification(fb,s);break;case Page::Settings:settings(fb,s);break;case Page::TouchSetup:touchSetup(fb,s);break;case Page::TouchRecalibrateConfirm:touchRecalibrateConfirm(fb,s);break;case Page::WeatherSetup:weatherSetup(fb,s);break;case Page::DisplayRefreshConfirm:displayRefreshConfirm(fb,s);break;case Page::SystemHealth:systemHealth(fb,s);break;case Page::SystemMetrics:systemMetrics(fb,s);break;case Page::Storage:storageDetail(fb,s);break;case Page::Network:networkDetail(fb,s);break;case Page::WeatherDetail:weatherDetail(fb,s);break;case Page::Battery:batteryDetail(fb,s);break;case Page::VehicleMotion:vehicleMotion(fb,s);break;case Page::Altimeter:altimeter(fb,s);break;case Page::TimezoneSetup:timezoneSetup(fb,s);break;case Page::LowPowerSetup:lowPowerSetup(fb,s);break;case Page::LowPowerStatus:lowPowerStatus(fb,s);break;case Page::DisplayRefreshMode:displayRefreshMode(fb,s);break;}
-  if(s.page!=Page::TouchSetup&&s.page!=Page::DisplayRefreshConfirm&&
-     s.page!=Page::DisplayCalibration&&s.page!=Page::TextQualification)globalRefreshControl(fb);
-  if(s.page==Page::Home||s.page==Page::Systems||s.page==Page::Radio||s.page==Page::Location||s.page==Page::Device||s.page==Page::Diagnostics||s.page==Page::DisplayRefreshConfirm) bottomNavigation(fb,s.page);
+  if(s.page!=Page::TouchSetup&&s.page!=Page::DisplayCalibration&&
+     s.page!=Page::TextQualification) bottomNavigation(fb,s.page);
 }
 
 }  // namespace ui

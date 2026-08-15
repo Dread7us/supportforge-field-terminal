@@ -73,6 +73,7 @@ struct UiSnapshot {
   battery::State batteryState = battery::State::NotPresent;
   bool batterySampleAttempted = false;
   bool batterySampleValid = false;
+  bool batteryChargeStatusVerified = false;
   uint32_t batteryLastSampleMs = 0;
   uint32_t batteryLastAttemptMs = 0;
   device_time::SyncState timeSyncState = device_time::SyncState::Unsynchronized;

@@ -9,7 +9,8 @@
     "nav_height": 96,
     "content_bottom": 864,
     "minimum_touch_target": 56,
-    "nav_item_width": 108,
+    "nav_item_width": 88,
+    "footer_refresh_bounds": [440,864,100,96],
     "header_brand_bounds": [24,8,270,80],
     "header_clock_bounds": [310,8,140,80],
     "header_battery_bounds": [462,8,66,80],
@@ -31,7 +32,8 @@
   },
   "navigation": {
     "labels": ["HOME", "SYSTEMS", "RADIO", "LOCATION", "DEVICE"],
-    "bounds": [[0,864,108,96],[108,864,108,96],[216,864,108,96],[324,864,108,96],[432,864,108,96]]
+    "bounds": [[0,864,88,96],[88,864,88,96],[176,864,88,96],[264,864,88,96],[352,864,88,96]],
+    "utility": {"label": "REFRESH", "bounds": [440,864,100,96]}
   },
     "touch": {"corner_x": 100, "corner_y": 120, "target_inset": 84, "target_radius": 44, "mapping_tolerance_x": 70, "mapping_tolerance_y": 100, "tap_slop": 24, "swipe_min": 88, "cross_axis_max": 64, "min_press_ms": 30, "max_press_ms": 1200, "clean_release_ms": 120, "transition_cooldown_ms": 120, "post_refresh_quiet_ms": 150},
   "pages": {

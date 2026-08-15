@@ -110,6 +110,9 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         self.assertIn('contractRect(spec::kHeaderClockBounds)', COMPONENTS)
         self.assertIn('contractRect(spec::kHeaderBatteryBounds)', COMPONENTS)
         self.assertIn('batteryIcon(fb,batteryGlyph,state.batteryState', COMPONENTS)
+        self.assertIn('chargeStatusVerified', BATTERY)
+        self.assertIn('snapshot_.sampleValid = socValid', BATTERY)
+        self.assertIn('chargerValid ? classifyChargeStatus(chargerStatus) : State::Available', BATTERY)
         self.assertIn('Page::Settings', MAIN + PAGES)
         for action in ('kDeviceSettingsAction', 'kSettingsTimezoneAction',
                        'kSettingsFormatAction', 'kSettingsSyncActionCompact',

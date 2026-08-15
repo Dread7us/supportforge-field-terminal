@@ -27,6 +27,9 @@ class UiContractTests(unittest.TestCase):
   self.assertIn('static_assert(spec::kHeaderBrandBounds',COMPONENTS)
   self.assertIn('"brand and clock regions overlap"',COMPONENTS)
   self.assertIn('"clock and battery regions overlap"',COMPONENTS)
+  refresh=SPEC['geometry']['footer_refresh_bounds']
+  self.assertGreaterEqual(refresh[0],440); self.assertEqual(refresh[1]+refresh[3],SPEC['canvas']['height'])
+  for region in regions: self.assertFalse(region[1] < refresh[1]+refresh[3] and refresh[1] < region[1]+region[3])
  def test_header_is_white_clipped_aligned_and_brand_drawn_once(self):
   app=COMPONENTS[COMPONENTS.index('void appBar('):COMPONENTS.index('void card(')]
   self.assertEqual(app.count('"supportFORGE"'),1)
@@ -213,6 +216,10 @@ class UiContractTests(unittest.TestCase):
   nav=METRICS['roles']['Navigation']; self.assertEqual((nav['weight'],nav['size']),('SemiBold',15))
   advances=nav['advances']; width=lambda s:sum(advances[ord(c)-32] for c in s)
   for label,bounds in zip(SPEC['navigation']['labels'],SPEC['navigation']['bounds']): self.assertLess(width(label),bounds[2]-6); self.assertEqual(bounds[1]+bounds[3],960)
+  utility=SPEC['navigation']['utility']; self.assertEqual(utility['label'],'REFRESH')
+  self.assertEqual(SPEC['navigation']['bounds'][-1][0]+SPEC['navigation']['bounds'][-1][2],utility['bounds'][0])
+  self.assertEqual(utility['bounds'][0]+utility['bounds'][2],SPEC['canvas']['width'])
+  self.assertIn('globalRefreshControlImpl(fb)',COMPONENTS[COMPONENTS.index('void bottomNavigation'):])
   self.assertIn('FontRole::Navigation',COMPONENTS); self.assertIn('active?kPaper:kInk',COMPONENTS)
  def test_primary_palette_and_required_labels_never_pale(self):
   self.assertNotIn('opacity',COMPONENTS.lower()+PAGES.lower()); self.assertNotIn('alpha',COMPONENTS.lower()+PAGES.lower())
