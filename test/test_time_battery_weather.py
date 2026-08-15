@@ -13,6 +13,7 @@ def text(path):
 TIME = text("src/time/time_service.cpp")
 TIME_H = text("src/time/time_service.h")
 BATTERY = text("src/battery/battery_manager.cpp")
+BATTERY_H = text("src/battery/battery_manager.h")
 WEATHER = text("src/weather/weather_manager.cpp")
 WEATHER_H = text("src/weather/weather_manager.h")
 CONFIG = text("src/app_config.h")
@@ -54,14 +55,32 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         self.assertIn('shownHour = state.hour % 12', COMPONENTS)
         self.assertIn('if (!shownHour) shownHour = 12', COMPONENTS)
 
-    def test_battery_is_bounded_truthful_and_has_no_guessed_probe(self):
-        for label in ('NOT PRESENT', 'BAT UNKNOWN', 'VALID', 'CHARGING'):
+    def test_battery_is_bounded_truthful_and_read_only(self):
+        for label in ('AVAILABLE', 'CHARGING', 'FULL', 'BAT UNKNOWN',
+                      'STALE', 'NOT PRESENT', 'ERROR'):
             self.assertIn(label, BATTERY)
+        for state in ('Available', 'Charging', 'Full', 'Stale', 'Unknown', 'NotPresent', 'Error'):
+            self.assertIn(state, BATTERY_H)
         self.assertIn('percentAvailable = false', BATTERY)
-        self.assertNotRegex(BATTERY, r'Wire\.|requestFrom|beginTransmission')
-        self.assertNotRegex(BATTERY, r'constexpr\s+uint(?:8|16)_t\s+\w*(?:Register|Command)\w*')
-        self.assertIn('batteryClassification', UI_STATE)
-        self.assertIn('battery::classificationName', PAGES)
+        self.assertIn('value >= 0 && value <= 100', BATTERY)
+        self.assertIn('kNormalSampleIntervalMs = 90UL * 1000UL', BATTERY)
+        self.assertIn('kChargingSampleIntervalMs = 45UL * 1000UL', BATTERY)
+        self.assertIn('kMaximumFreshAgeMs = 3UL * kNormalSampleIntervalMs', BATTERY)
+        self.assertIn('kGaugeAddress = 0x55', BATTERY)
+        self.assertIn('kStateOfChargeRegister = 0x2C', BATTERY)
+        self.assertIn('decodeLittleEndianWord(first[0], first[1])', BATTERY)
+        self.assertIn('firstValue != secondValue', BATTERY)
+        self.assertIn('retainedPercentFresh', BATTERY)
+        self.assertIn('validatedPercentFresh = socValid || retainedPercentFresh', BATTERY)
+        self.assertIn('snapshot_.percentAvailable = validatedPercentFresh', BATTERY)
+        self.assertIn('before.state == State::Stale ? State::Stale : State::Error', BATTERY)
+        self.assertIn('kChargerAddress = 0x6B', BATTERY)
+        self.assertIn('kChargerStatusRegister = 0x0B', BATTERY)
+        self.assertIn('(register0b & kChargeStatusMask) >> 3', BATTERY)
+        self.assertNotRegex(BATTERY, r'Wire\.write\([^r]|seal|reset|calibr|data memory')
+        self.assertIn('batteryState', UI_STATE)
+        self.assertIn('battery::stateName', PAGES)
+        self.assertIn('freshness_ms=%s', BATTERY)
 
     def test_weather_states_cache_interval_and_guardian_isolation(self):
         for label in ('WX SETUP', 'WX OFFLINE', 'WX ONLINE'):
@@ -87,13 +106,17 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         self.assertIn('WEATHER result=%s', serial_lines)
 
     def test_phone_header_and_settings_actions(self):
-        self.assertIn('const Rect batteryClip{462, 0, 66', COMPONENTS)
-        self.assertIn('icon(fb,Icon::Battery,492,28', COMPONENTS)
+        self.assertIn('contractRect(spec::kHeaderBrandBounds)', COMPONENTS)
+        self.assertIn('contractRect(spec::kHeaderClockBounds)', COMPONENTS)
+        self.assertIn('contractRect(spec::kHeaderBatteryBounds)', COMPONENTS)
+        self.assertIn('batteryIcon(fb,batteryGlyph,state.batteryState', COMPONENTS)
         self.assertIn('Page::Settings', MAIN + PAGES)
         for action in ('kDeviceSettingsAction', 'kSettingsTimezoneAction',
-                       'kSettingsFormatAction', 'kSettingsSyncAction'):
+                       'kSettingsFormatAction', 'kSettingsSyncActionCompact',
+                       'kSettingsTouchAction'):
             self.assertIn(action, MAIN)
-        for label in ('TIMEZONE', 'CLOCK FORMAT', 'LAST TIME SYNC', 'SYNC STATUS'):
+        for label in ('TIMEZONE', 'TIME FORMAT', 'LAST TIME SYNC', 'SYNC TIME',
+                      'RECALIBRATE TOUCH'):
             self.assertIn(label, PAGES)
 
     def test_composite_ui_snapshot_has_explicit_loop_stack_budget(self):

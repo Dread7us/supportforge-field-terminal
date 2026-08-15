@@ -15,6 +15,10 @@ class TelemetryManager {
   Snapshot snapshot() const;
   uint32_t version() const;
   void requestRefresh();
+  void setSuspended(bool suspended);
+  bool suspended() const;
+  bool idle() const;
+  uint32_t heartbeat() const;
   void toggleTemperatureUnit();
   uint32_t nextPollInSeconds(uint32_t nowMs) const;
 
@@ -30,6 +34,9 @@ class TelemetryManager {
   Snapshot snapshot_{};
   Preferences preferences_;
   bool refreshRequested_ = false;
+  bool suspended_ = false;
+  bool inFlight_ = false;
+  uint32_t heartbeat_ = 0;
   uint32_t nextPollMs_ = 0;
   uint32_t nextWifiAttemptMs_ = 0;
   uint32_t wifiAttemptStartedMs_ = 0;

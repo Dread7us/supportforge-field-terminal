@@ -10,11 +10,16 @@ namespace {
 constexpr uint8_t kRtcAddress = 0x51;
 constexpr time_t kPlausibleEpoch = 1704067200;  // 2024-01-01 UTC, validity only.
 constexpr uint32_t kCheckIntervalMs = 1000;
+constexpr uint32_t kPreferenceWriteDelayMs = 750;
 constexpr const char* kTimezoneLabels[] = {"UTC", "PACIFIC", "MOUNTAIN", "CENTRAL", "EASTERN"};
 constexpr const char* kTimezoneRules[] = {
     "UTC0", "PST8PDT,M3.2.0,M11.1.0", "MST7MDT,M3.2.0,M11.1.0",
     "CST6CDT,M3.2.0,M11.1.0", "EST5EDT,M3.2.0,M11.1.0"};
 constexpr uint8_t kTimezoneCount = sizeof(kTimezoneLabels) / sizeof(kTimezoneLabels[0]);
+constexpr const char* kTimezoneDescriptions[] = {
+    "COORDINATED UNIVERSAL TIME", "PACIFIC TIME - DST AUTOMATIC",
+    "MOUNTAIN TIME - DST AUTOMATIC", "CENTRAL TIME - DST AUTOMATIC",
+    "EASTERN TIME - DST AUTOMATIC"};
 
 uint8_t fromBcd(uint8_t value) { return (value >> 4) * 10 + (value & 0x0F); }
 uint8_t toBcd(uint8_t value) { return static_cast<uint8_t>((value / 10) << 4 | (value % 10)); }
@@ -42,6 +47,12 @@ const char* timezoneRule(uint8_t index) {
   return kTimezoneRules[index < kTimezoneCount ? index : 0];
 }
 
+const char* timezoneDescription(uint8_t index) {
+  return kTimezoneDescriptions[index < kTimezoneCount ? index : 0];
+}
+
+uint8_t timezoneCount() { return kTimezoneCount; }
+
 bool TimeService::begin(bool rtcObserved) {
   rtcObserved_ = rtcObserved;
   if (preferences_.begin("sf_time", false)) {
@@ -66,6 +77,11 @@ void TimeService::applyTimezone() {
 }
 
 void TimeService::poll(uint32_t nowMs, bool wifiConnected) {
+  if (preferencesDirty_ && reached(nowMs, preferencesDueMs_)) {
+    preferences_.putUChar("tz", snapshot_.timezoneIndex);
+    preferences_.putBool("hour24", snapshot_.use24Hour);
+    preferencesDirty_ = false;
+  }
   if (!reached(nowMs, nextCheckMs_)) return;
   nextCheckMs_ = nowMs + kCheckIntervalMs;
   if (wifiConnected && (!ntpStarted_ || forceSync_)) {
@@ -92,15 +108,23 @@ void TimeService::poll(uint32_t nowMs, bool wifiConnected) {
 }
 
 void TimeService::cycleTimezone() {
-  snapshot_.timezoneIndex = (snapshot_.timezoneIndex + 1) % kTimezoneCount;
-  preferences_.putUChar("tz", snapshot_.timezoneIndex);
+  setTimezone((snapshot_.timezoneIndex + 1) % kTimezoneCount);
+}
+
+bool TimeService::setTimezone(uint8_t index) {
+  if (index >= kTimezoneCount || index == snapshot_.timezoneIndex) return false;
+  snapshot_.timezoneIndex = index;
+  preferencesDirty_ = true;
+  preferencesDueMs_ = millis() + kPreferenceWriteDelayMs;
   applyTimezone();
   publishSettingsChange();
+  return true;
 }
 
 void TimeService::toggleHourFormat() {
   snapshot_.use24Hour = !snapshot_.use24Hour;
-  preferences_.putBool("hour24", snapshot_.use24Hour);
+  preferencesDirty_ = true;
+  preferencesDueMs_ = millis() + kPreferenceWriteDelayMs;
   publishSettingsChange();
 }
 

@@ -27,6 +27,7 @@ class TimeService {
   bool begin(bool rtcObserved);
   void poll(uint32_t nowMs, bool wifiConnected);
   void cycleTimezone();
+  bool setTimezone(uint8_t index);
   void toggleHourFormat();
   void requestSync();
   Snapshot snapshot() const { return snapshot_; }
@@ -44,11 +45,15 @@ class TimeService {
   bool rtcObserved_ = false;
   bool ntpStarted_ = false;
   bool forceSync_ = false;
+  bool preferencesDirty_ = false;
+  uint32_t preferencesDueMs_ = 0;
   uint32_t nextCheckMs_ = 0;
 };
 
 const char* syncStateName(SyncState value);
 const char* timezoneLabel(uint8_t index);
 const char* timezoneRule(uint8_t index);
+const char* timezoneDescription(uint8_t index);
+uint8_t timezoneCount();
 
 }  // namespace device_time

@@ -54,17 +54,93 @@ constexpr Rect kDeviceRefreshAction{24, 654, 238, 72};
 constexpr Rect kDeviceTemperatureAction{278, 654, 238, 72};
 constexpr Rect kSystemsSectionAction{24, 742, 492, 72};
 constexpr Rect kDeviceSettingsAction = contractRect(spec::kDeviceCards[5]);
+constexpr Rect kDeviceDisplayRefreshAction = kDeviceRefreshAction;
 constexpr Rect kSettingsTimezoneAction = contractRect(spec::kSettingsCards[1]);
 constexpr Rect kSettingsFormatAction = contractRect(spec::kSettingsCards[2]);
 constexpr Rect kSettingsSyncAction = contractRect(spec::kSettingsCards[4]);
+constexpr Rect kSettingsTouchAction{366, 642, 150, 82};
+constexpr Rect kSettingsLowPowerAction{24, 642, 150, 82};
+constexpr Rect kSettingsSyncActionCompact{195, 642, 150, 82};
+constexpr Rect kSettingsTouchActionCompact = kSettingsTouchAction;
+constexpr Rect kTouchRecalibrateCancelAction{24, 742, 238, 72};
+constexpr Rect kTouchRecalibrateConfirmAction{278, 742, 238, 72};
 constexpr Rect kHomeWeatherAction = contractRect(spec::kHomeCards[5]);
 constexpr Rect kLocationGpsPowerAction{24, 582, 238, 72};
 constexpr Rect kLocationSpeedUnitAction{278, 582, 238, 72};
 constexpr Rect kLocationPrivacyAction{24, 670, 238, 72};
 constexpr Rect kLocationWeatherSetupAction{278, 670, 238, 72};
 constexpr Rect kLocationWeatherRefreshAction{24, 758, 492, 72};
+constexpr Rect kLocationElevationAction{24, 396, 492, 58};
 constexpr Rect kSettingsWeatherAction{24, 758, 492, 72};
 constexpr Rect kDiagnosticsDisplayCalibrationAction{24, 632, 492, 158};
 constexpr Rect kDiagnosticsTextQualificationAction{24, 632, 492, 158};
+constexpr Rect kRefreshCancelAction{24, 742, 238, 72};
+constexpr Rect kRefreshConfirmAction{278, 742, 238, 72};
+constexpr Rect kDetailBackAction{24, 776, 492, 72};
+constexpr Rect kHomeHostAction = contractRect(spec::kHomeCards[0]);
+constexpr Rect kHomeMetricsAction = contractRect(spec::kHomeCards[1]);
+constexpr Rect kHomeWeatherDetailAction = contractRect(spec::kHomeCards[2]);
+constexpr Rect kHomeMotionAction = contractRect(spec::kHomeCards[3]);
+constexpr Rect kHomeStorageAction{24,706,492,48};
+constexpr Rect kHomeNetworkAction{24,658,492,48};
+constexpr Rect kHomeBatteryAction{24,610,492,48};
+constexpr Rect kHeaderBatteryAction = contractRect(spec::kHeaderBatteryBounds);
+constexpr Rect kGlobalRefreshAction = contractRect(spec::kHeaderClockBounds);
+constexpr Rect kHeaderClockAction = contractRect(spec::kHeaderClockBounds);
+constexpr Rect kDeviceBatteryAction = contractRect(spec::kDeviceCards[0]);
+constexpr Rect kWeatherDetailSetupAction{24,690,492,64};
+constexpr Rect kTimezoneBackAction{24,776,492,72};
+constexpr Rect kLowPowerBackAction{24,776,492,72};
+constexpr Rect kLowPowerExitAction{24,690,492,72};
+constexpr Rect kSettingsRefreshModeAction{24, 540, 492, 86};
+constexpr Rect kRefreshModeActions[] = {
+    {24, 180, 492, 144}, {24, 344, 492, 144}, {24, 508, 492, 164}};
+constexpr Rect kRefreshModeBackAction{24, 776, 492, 72};
+constexpr Rect kLowPowerPresetActions[] = {
+    {24,176,492,92}, {24,282,492,92}, {24,388,492,92},
+    {24,494,492,92}, {24,600,492,92}};
+constexpr Rect kTimezoneActions[] = {
+    {24,150,492,104}, {24,268,492,104}, {24,386,492,104},
+    {24,504,492,104}, {24,622,492,104}};
+static_assert(kTimezoneActions[4].y + kTimezoneActions[4].h < kTimezoneBackAction.y,
+              "timezone options and Back must not overlap");
+static_assert(kLowPowerPresetActions[4].y + kLowPowerPresetActions[4].h < kLowPowerBackAction.y,
+              "low-power options and Back must not overlap");
+static_assert(kGlobalRefreshAction.w >= kMinimumTouchTarget &&
+                  kGlobalRefreshAction.h >= kMinimumTouchTarget,
+              "global refresh must remain a deliberate touch target");
+static_assert(kRefreshModeActions[0].h >= kMinimumTouchTarget &&
+                  kRefreshModeActions[1].h >= kMinimumTouchTarget &&
+                  kRefreshModeActions[2].h >= kMinimumTouchTarget &&
+                  kRefreshModeActions[2].y + kRefreshModeActions[2].h < kRefreshModeBackAction.y,
+              "refresh mode choices and Back must be large and non-overlapping");
+
+// Dedicated Vehicle Motion geometry. The speed rectangle is deliberately the
+// largest metric region on the route and is cleared independently before text.
+constexpr Rect kVehicleGpsStateBounds{180, 102, 180, 30};
+constexpr Rect kVehicleSpeedBounds{24, 136, 492, 186};
+constexpr Rect kVehicleSpeedUnitBounds{24, 322, 492, 34};
+constexpr Rect kVehicleMovementBounds{24, 358, 492, 42};
+constexpr Rect kVehicleCompassBounds{24, 418, 260, 166};
+constexpr Rect kVehicleCourseBounds{300, 418, 216, 166};
+constexpr Rect kVehicleQualityBounds{24, 602, 492, 154};
+constexpr Rect kVehicleElevationAction{24, 602, 492, 58};
+constexpr Rect kVehicleLocationAction{150, 88, 240, 48};
+constexpr Rect kAltimeterMetricBounds{36, 196, 468, 150};
+constexpr Rect kAltimeterUnitAction{278, 688, 238, 64};
+static_assert(kLocationElevationAction.w >= kMinimumTouchTarget &&
+                  kLocationElevationAction.h >= kMinimumTouchTarget &&
+                  kVehicleElevationAction.w >= kMinimumTouchTarget &&
+                  kVehicleElevationAction.h >= kMinimumTouchTarget,
+              "elevation rows must remain qualified touch targets");
+static_assert(kVehicleSpeedBounds.w > kVehicleCompassBounds.w &&
+                  kVehicleSpeedBounds.h > kVehicleQualityBounds.h,
+              "vehicle speed must remain the dominant metric region");
+static_assert(kVehicleSpeedBounds.y >= kVehicleGpsStateBounds.y + kVehicleGpsStateBounds.h &&
+                  kVehicleSpeedBounds.y + kVehicleSpeedBounds.h <= kVehicleSpeedUnitBounds.y &&
+                  kVehicleMovementBounds.y + kVehicleMovementBounds.h <= kVehicleCompassBounds.y &&
+                  kVehicleCompassBounds.y + kVehicleCompassBounds.h <= kVehicleQualityBounds.y &&
+                  kVehicleQualityBounds.y + kVehicleQualityBounds.h <= kDetailBackAction.y,
+              "vehicle motion regions must not overlap");
 
 }  // namespace ui

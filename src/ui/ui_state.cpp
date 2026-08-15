@@ -5,6 +5,24 @@
 
 namespace ui {
 
+const char* refreshModeName(RefreshMode mode) {
+  switch (mode) {
+    case RefreshMode::QuickNavigation: return "QUICK NAVIGATION";
+    case RefreshMode::Balanced: return "BALANCED";
+    case RefreshMode::BeautifulClean: return "BEAUTIFUL / CLEAN";
+  }
+  return "BALANCED";
+}
+
+const char* refreshModeSummary(RefreshMode mode) {
+  switch (mode) {
+    case RefreshMode::QuickNavigation: return "FAST GC16; MANUAL CLEAN AS NEEDED";
+    case RefreshMode::Balanced: return "CLEAN BETWEEN PAGES; FAST LIVE UPDATES";
+    case RefreshMode::BeautifulClean: return "CLEAN BEFORE EVERY VISIBLE UPDATE";
+  }
+  return "CLEAN BETWEEN PAGES; FAST LIVE UPDATES";
+}
+
 const char* pageName(Page page) {
   switch (page) {
     case Page::Home: return "HOME";
@@ -17,7 +35,21 @@ const char* pageName(Page page) {
     case Page::TextQualification: return "TEXT_QUALIFICATION";
     case Page::Settings: return "SETTINGS";
     case Page::TouchSetup: return "TOUCH SETUP";
+    case Page::TouchRecalibrateConfirm: return "RECALIBRATE TOUCH";
     case Page::WeatherSetup: return "WEATHER SETUP";
+    case Page::DisplayRefreshConfirm: return "REFRESH DISPLAY";
+    case Page::SystemHealth: return "SYSTEM HEALTH";
+    case Page::SystemMetrics: return "SYSTEM METRICS";
+    case Page::Storage: return "STORAGE";
+    case Page::Network: return "NETWORK";
+    case Page::WeatherDetail: return "WEATHER DETAIL";
+    case Page::Battery: return "BATTERY";
+    case Page::VehicleMotion: return "VEHICLE MOTION";
+    case Page::Altimeter: return "GPS ELEVATION";
+    case Page::TimezoneSetup: return "TIMEZONE SETUP";
+    case Page::LowPowerSetup: return "LOW POWER MODE";
+    case Page::LowPowerStatus: return "LOW POWER STATUS";
+    case Page::DisplayRefreshMode: return "DISPLAY REFRESH MODE";
   }
   return "HOME";
 }
@@ -36,7 +68,7 @@ double temperatureThreshold(const UiSnapshot& snapshot) {
 }
 
 bool materiallyDifferent(const UiSnapshot& a, const UiSnapshot& b) {
-  // Page changes are owned by UiController::requestPage(). Snapshot updates
+  // Page changes are owned by DisplayCoordinator::requestPage(). Snapshot updates
   // retain the active page, so comparing it here would require a large
   // temporary UiSnapshot on Arduino's loop-task stack.
   if (a.configured != b.configured ||
@@ -52,9 +84,12 @@ bool materiallyDifferent(const UiSnapshot& a, const UiSnapshot& b) {
       a.telemetry.wifiState != b.telemetry.wifiState ||
       a.telemetry.displayTemperatureUnit != b.telemetry.displayTemperatureUnit ||
       a.systemsSection != b.systemsSection ||
+      a.touchMappingVerified != b.touchMappingVerified ||
+      a.touchSetupStep != b.touchSetupStep ||
+      a.touchSetupReady != b.touchSetupReady ||
       a.batteryPercentAvailable != b.batteryPercentAvailable ||
       (a.batteryPercentAvailable && a.batteryPercent != b.batteryPercent) ||
-      a.batteryClassification != b.batteryClassification ||
+       a.batteryState != b.batteryState ||
       a.weather.state != b.weather.state ||
        a.weather.source != b.weather.source ||
        a.weather.configured != b.weather.configured ||
@@ -63,18 +98,36 @@ bool materiallyDifferent(const UiSnapshot& a, const UiSnapshot& b) {
        a.weather.showCondition != b.weather.showCondition ||
        a.weather.showCity != b.weather.showCity ||
        a.weather.showFeelsLike != b.weather.showFeelsLike ||
+      a.weather.searchState != b.weather.searchState ||
+      a.weather.resultCount != b.weather.resultCount ||
+      strcmp(a.weather.city, b.weather.city) || strcmp(a.weather.region, b.weather.region) ||
+      strcmp(a.weather.country, b.weather.country) || strcmp(a.weather.postal, b.weather.postal) ||
       a.weather.dataAvailable != b.weather.dataAvailable ||
+      a.weather.feelsLikeAvailable != b.weather.feelsLikeAvailable ||
+      a.weather.highLowAvailable != b.weather.highLowAvailable ||
+      a.weather.humidityAvailable != b.weather.humidityAvailable ||
+      a.weather.windAvailable != b.weather.windAvailable ||
+      a.weather.precipitationAvailable != b.weather.precipitationAvailable ||
       (a.weather.dataAvailable &&
        (a.weather.temperatureTenths != b.weather.temperatureTenths ||
-        a.weather.weatherCode != b.weather.weatherCode ||
-        strcmp(a.weather.city, b.weather.city))) ||
+        a.weather.feelsLikeTenths != b.weather.feelsLikeTenths ||
+        a.weather.highTenths != b.weather.highTenths || a.weather.lowTenths != b.weather.lowTenths ||
+        a.weather.humidityPercent != b.weather.humidityPercent ||
+        a.weather.windSpeedTenths != b.weather.windSpeedTenths ||
+        a.weather.windDirectionDegrees != b.weather.windDirectionDegrees ||
+        a.weather.precipitationPercent != b.weather.precipitationPercent ||
+        a.weather.weatherCode != b.weather.weatherCode)) ||
        a.location.version != b.location.version ||
+       a.lowPower.version != b.lowPower.version ||
+       a.manualRefreshRateLimited != b.manualRefreshRateLimited ||
+       a.refreshMode != b.refreshMode ||
        a.weatherWizard.active != b.weatherWizard.active ||
        a.weatherWizard.step != b.weatherWizard.step ||
        a.weatherWizard.inputKind != b.weatherWizard.inputKind ||
        strcmp(a.weatherWizard.input, b.weatherWizard.input) ||
        strcmp(a.weatherWizard.latitude, b.weatherWizard.latitude) ||
        strcmp(a.weatherWizard.longitude, b.weatherWizard.longitude) ||
+       strcmp(a.weatherWizard.country, b.weatherWizard.country) ||
        strcmp(a.weatherWizard.error, b.weatherWizard.error) ||
        a.weatherWizard.characterPage != b.weatherWizard.characterPage ||
        a.telemetry.host.available != b.telemetry.host.available ||
@@ -95,6 +148,9 @@ bool materiallyDifferent(const UiSnapshot& a, const UiSnapshot& b) {
       changed(a.telemetry.speedTest.ping, b.telemetry.speedTest.ping, 0.01) ||
       a.telemetry.speedTest.isRunningAvailable != b.telemetry.speedTest.isRunningAvailable ||
       a.telemetry.speedTest.isRunning != b.telemetry.speedTest.isRunning) return true;
+  for (uint8_t i = 0; i < b.weather.resultCount; ++i) {
+    if (strcmp(a.weather.results[i].label, b.weather.results[i].label)) return true;
+  }
   for (uint8_t i = 0; i < a.telemetry.diskCount; ++i) {
     if (changed(a.telemetry.disks[i].usedPercent, b.telemetry.disks[i].usedPercent, 1.0)) return true;
   }

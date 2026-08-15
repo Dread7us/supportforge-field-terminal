@@ -146,6 +146,38 @@ void TelemetryManager::requestRefresh() {
   portEXIT_CRITICAL(&scheduleMux_);
 }
 
+void TelemetryManager::setSuspended(bool suspended) {
+  portENTER_CRITICAL(&scheduleMux_);
+  if (suspended_ == suspended) {
+    portEXIT_CRITICAL(&scheduleMux_);
+    return;
+  }
+  suspended_ = suspended;
+  if (!suspended) refreshRequested_ = true;
+  portEXIT_CRITICAL(&scheduleMux_);
+}
+
+bool TelemetryManager::suspended() const {
+  portENTER_CRITICAL(&scheduleMux_);
+  const bool value = suspended_;
+  portEXIT_CRITICAL(&scheduleMux_);
+  return value;
+}
+
+bool TelemetryManager::idle() const {
+  portENTER_CRITICAL(&scheduleMux_);
+  const bool value = !inFlight_;
+  portEXIT_CRITICAL(&scheduleMux_);
+  return value;
+}
+
+uint32_t TelemetryManager::heartbeat() const {
+  portENTER_CRITICAL(&scheduleMux_);
+  const uint32_t value = heartbeat_;
+  portEXIT_CRITICAL(&scheduleMux_);
+  return value;
+}
+
 void TelemetryManager::toggleTemperatureUnit() {
   Snapshot next = snapshot();
   const auto selected = next.displayTemperatureUnit == appconfig::TemperatureUnit::Celsius
@@ -181,6 +213,14 @@ void TelemetryManager::updateConnectionState(WifiState state, bool connected) {
 void TelemetryManager::run() {
   for (;;) {
     const uint32_t now = millis();
+    portENTER_CRITICAL(&scheduleMux_);
+    ++heartbeat_;
+    const bool suspended = suspended_;
+    portEXIT_CRITICAL(&scheduleMux_);
+    if (suspended) {
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
     const wl_status_t wifi = WiFi.status();
     if (wifi == WL_CONNECTED) {
       reconnectDelayMs_ = 2000;
@@ -225,6 +265,13 @@ void TelemetryManager::run() {
 }
 
 void TelemetryManager::performPollingCycle(uint32_t nowMs) {
+  portENTER_CRITICAL(&scheduleMux_);
+  if (suspended_) {
+    portEXIT_CRITICAL(&scheduleMux_);
+    return;
+  }
+  inFlight_ = true;
+  portEXIT_CRITICAL(&scheduleMux_);
   Snapshot before = snapshot();
   before.lastAttemptMs = nowMs;
   const bool primaryProbe = preferredEndpoint_ == Endpoint::EP2 &&
@@ -281,6 +328,7 @@ void TelemetryManager::performPollingCycle(uint32_t nowMs) {
   publish(next);
   portENTER_CRITICAL(&scheduleMux_);
   nextPollMs_ = millis() + appconfig::kPollIntervalMs;
+  inFlight_ = false;
   portEXIT_CRITICAL(&scheduleMux_);
 }
 

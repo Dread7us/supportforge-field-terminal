@@ -13,6 +13,8 @@ const fonts::Font& fontFor(FontRole role) {
     case FontRole::PageHeading: return fonts::kPageHeading;
     case FontRole::Brand: return fonts::kBrand;
     case FontRole::Metric: return fonts::kMetric;
+    case FontRole::VehicleSpeed: return fonts::kVehicleSpeed;
+    case FontRole::AltimeterMetric: return fonts::kAltimeterMetric;
     case FontRole::Navigation: return fonts::kNavigation;
     case FontRole::QualificationCurrent: return fonts::kQualificationCurrent;
     case FontRole::QualificationRegularAa: return fonts::kQualificationRegularAa;
@@ -21,6 +23,19 @@ const fonts::Font& fontFor(FontRole role) {
     case FontRole::QualificationBoldMono: return fonts::kQualificationBoldMono;
   }
   return fonts::kBody;
+}
+
+void globalRefreshControlImpl(uint8_t* fb) {
+  epd_fill_rect({kGlobalRefreshAction.x,kGlobalRefreshAction.y,
+                 kGlobalRefreshAction.w,kGlobalRefreshAction.h},kPaper,fb);
+  roundedRect(fb,kGlobalRefreshAction,8,kPaper,kInk);
+  const String top="REFRESH", bottom="DISPLAY";
+  const int topX=kGlobalRefreshAction.x+(kGlobalRefreshAction.w-textWidth(top,FontRole::Caption))/2;
+  const int bottomX=kGlobalRefreshAction.x+(kGlobalRefreshAction.w-textWidth(bottom,FontRole::Caption))/2;
+  text(fb,kGlobalRefreshAction,max(kGlobalRefreshAction.x+3,topX),kGlobalRefreshAction.y+30,
+       fittedText(top,FontRole::Caption,kGlobalRefreshAction.w-6),FontRole::Caption,kInk);
+  text(fb,kGlobalRefreshAction,max(kGlobalRefreshAction.x+3,bottomX),kGlobalRefreshAction.y+58,
+       fittedText(bottom,FontRole::Caption,kGlobalRefreshAction.w-6),FontRole::Caption,kInk);
 }
 
 int glyphIndex(char raw) {
@@ -37,6 +52,8 @@ void line(uint8_t* fb, int x1, int y1, int x2, int y2, uint8_t color) {
 }
 
 }  // namespace
+
+void globalRefreshControl(uint8_t* fb) { globalRefreshControlImpl(fb); }
 
 void clear(uint8_t* fb) { epd_fill_rect({0, 0, kCanvasWidth, kCanvasHeight}, kPaper, fb); }
 
@@ -66,6 +83,20 @@ int textHeight(FontRole role) { return fontFor(role).lineHeight; }
 
 bool textFits(const String& value, FontRole role, Rect region) {
   return textWidth(value, role) <= region.w && textHeight(role) <= region.h;
+}
+
+String fittedText(const String& value, FontRole role, int width) {
+  if (textWidth(value, role) <= width) return value;
+  String result = value;
+  while (result.length() && textWidth(result + "...", role) > width) {
+    result.remove(result.length() - 1);
+  }
+  return result.length() ? result + "..." : String("--");
+}
+
+int centeredBaseline(Rect bounds, FontRole role) {
+  const fonts::Font& font = fontFor(role);
+  return bounds.y + (bounds.h + font.ascent - font.descent) / 2;
 }
 
 void text(uint8_t* fb, Rect clip, int x, int baseline, const String& value, FontRole role, uint8_t color) {
@@ -127,20 +158,77 @@ void icon(uint8_t* fb, Icon value, int cx, int cy, int s, uint8_t color) {
   }
 }
 
+void batteryIcon(uint8_t* fb, Rect bounds, battery::State state,
+                 bool percentAvailable, uint8_t percent, uint8_t color) {
+  // Exact rectangles make the body, terminal, fill, and split-contrast text
+  // independently clipped. Unknown data always leaves a hollow white body.
+  const Rect body{bounds.x, bounds.y, bounds.w - 5, bounds.h};
+  const Rect interior{body.x + 3, body.y + 3, body.w - 6, body.h - 6};
+  const Rect terminal{body.x + body.w, body.y + body.h / 3, 5,
+                      max(2, body.h / 3)};
+  epd_fill_rect({body.x, body.y, body.w, body.h}, kPaper, fb);
+  epd_draw_rect({body.x, body.y, body.w, body.h}, color, fb);
+  epd_draw_rect({body.x + 1, body.y + 1, body.w - 2, body.h - 2}, color, fb);
+  epd_fill_rect({terminal.x, terminal.y, terminal.w, terminal.h}, color, fb);
+  if (!percentAvailable || !battery::validPercent(percent)) {
+    const String unknown = "--";
+    const int x = interior.x + (interior.w - textWidth(unknown, FontRole::Caption)) / 2;
+    text(fb, interior, x, interior.y + 16, unknown, FontRole::Caption, kInk);
+    return;
+  }
+  const uint8_t bounded = min<uint8_t>(percent, 100);
+  const int fillWidth = (interior.w * bounded + 50) / 100;
+  const Rect filled{interior.x, interior.y, fillWidth, interior.h};
+  const Rect unfilled{interior.x + fillWidth, interior.y,
+                      interior.w - fillWidth, interior.h};
+  if (filled.w > 0) epd_fill_rect({filled.x, filled.y, filled.w, filled.h}, color, fb);
+
+  const String label = String(bounded);
+  const int labelWidth = textWidth(label, FontRole::Caption);
+  const int labelX = interior.x + (interior.w - labelWidth) / 2;
+  const int labelBaseline = interior.y + 16;
+  if (filled.w > 0) text(fb, filled, labelX, labelBaseline, label, FontRole::Caption, kPaper);
+  if (unfilled.w > 0) text(fb, unfilled, labelX, labelBaseline, label, FontRole::Caption, kInk);
+
+  if (state == battery::State::Charging) {
+    // Static two-tone lightning remains visible over either black fill or white.
+    const int cx = body.x + body.w - 8;
+    for (int offset=-1;offset<=1;++offset) {
+      line(fb, cx + 2 + offset, body.y + 3, cx - 2 + offset, body.y + body.h / 2, kInk);
+      line(fb, cx - 2 + offset, body.y + body.h / 2, cx + 1 + offset, body.y + body.h / 2, kInk);
+      line(fb, cx + 1 + offset, body.y + body.h / 2, cx - 3 + offset, body.y + body.h - 3, kInk);
+    }
+    line(fb, cx + 2, body.y + 3, cx - 2, body.y + body.h / 2, kPaper);
+    line(fb, cx - 2, body.y + body.h / 2, cx + 1, body.y + body.h / 2, kPaper);
+    line(fb, cx + 1, body.y + body.h / 2, cx - 3, body.y + body.h - 3, kPaper);
+  }
+}
+
 void circle(uint8_t* fb, int cx, int cy, int radius, uint8_t color) {
   epd_draw_circle(cx, cy, radius, color, fb);
 }
 
 void appBar(uint8_t* fb, const UiSnapshot& state, const char* section) {
-  epd_fill_rect({0,0,kCanvasWidth,kAppBarHeight},kPaper,fb);
-  const Rect brandClip{kMargin, 0, 294, kAppBarHeight - 1};
-  const Rect clockClip{326, 0, 132, kAppBarHeight - 1};
-  const Rect batteryClip{462, 0, 66, kAppBarHeight - 1};
-  text(fb,brandClip,kMargin,38,"supportFORGE",FontRole::Brand,kInk);
-  // The product subtitle is invariant. Page names belong to page content, never
-  // in the brand/status header where they could recreate the photographed overlap.
-  (void)section;
-  text(fb,brandClip,kMargin,70,"FIELD TERMINAL",FontRole::Body,kInkMuted);
+  const Rect brandClip = contractRect(spec::kHeaderBrandBounds);
+  const Rect clockClip = contractRect(spec::kHeaderClockBounds);
+  const Rect batteryClip = contractRect(spec::kHeaderBatteryBounds);
+  static_assert(spec::kHeaderBrandBounds[0] + spec::kHeaderBrandBounds[2] <=
+                    spec::kHeaderClockBounds[0], "brand and clock regions overlap");
+  static_assert(spec::kHeaderClockBounds[0] + spec::kHeaderClockBounds[2] <=
+                    spec::kHeaderBatteryBounds[0], "clock and battery regions overlap");
+  // Clear every independently clipped region before drawing it. The rest of the
+  // app bar is already white from full-frame composition; no dark header band is used.
+  epd_fill_rect({brandClip.x,brandClip.y,brandClip.w,brandClip.h},kPaper,fb);
+  epd_fill_rect({clockClip.x,clockClip.y,clockClip.w,clockClip.h},kPaper,fb);
+  epd_fill_rect({batteryClip.x,batteryClip.y,batteryClip.w,batteryClip.h},kPaper,fb);
+  const int brandBaseline = brandClip.y + fonts::kBrand.ascent;
+  text(fb,brandClip,brandClip.x,brandBaseline,"supportFORGE",FontRole::Brand,kInk);
+  // Keep page identity in the dedicated brand clip. Fitting prevents a long
+  // diagnostics title from entering the clock region.
+  const int subtitleBaseline = brandClip.y + 64;
+  const String subtitle=section&&section[0]?String(section):String("FIELD TERMINAL");
+  text(fb,brandClip,brandClip.x,subtitleBaseline,
+       fittedText(subtitle,FontRole::Body,brandClip.w),FontRole::Body,kInkMuted);
   String time = "--:--";
   if (state.rtcValid) {
     uint8_t shownHour = state.hour;
@@ -154,25 +242,35 @@ void appBar(uint8_t* fb, const UiSnapshot& state, const char* section) {
            (state.minute < 10 ? "0" : "") + state.minute + suffix;
   }
   const int timeX = clockClip.x + clockClip.w - textWidth(time,FontRole::CardHeading);
-  text(fb,clockClip,max(clockClip.x,timeX),32,time,FontRole::CardHeading,kInk);
+  text(fb,clockClip,max(clockClip.x,timeX),clockClip.y+27,time,FontRole::CardHeading,kInk);
   String date = state.rtcValid ? String(state.year) + "-" +
       (state.month < 10 ? "0" : "") + state.month + "-" +
       (state.day < 10 ? "0" : "") + state.day : "TIME SYNC";
   const int dateX = clockClip.x + clockClip.w - textWidth(date,FontRole::Caption);
-  text(fb,clockClip,max(clockClip.x,dateX),68,date,FontRole::Caption,kInkMuted);
-  icon(fb,Icon::Battery,492,28,28,kInk);
-  const String battery = state.batteryPercentAvailable ? String(state.batteryPercent)+"%" : "--";
+  text(fb,clockClip,max(clockClip.x,dateX),clockClip.y+63,date,FontRole::Caption,kInkMuted);
+  const Rect batteryGlyph{batteryClip.x+2,batteryClip.y+8,62,28};
+  batteryIcon(fb,batteryGlyph,state.batteryState,state.batteryPercentAvailable,
+              state.batteryPercent,kInk);
+  const String battery = state.batteryState == battery::State::Charging ? "CHG" :
+      (state.batteryState == battery::State::Full ? "FULL" :
+       (state.batteryPercentAvailable ? "%" : "--"));
   const int batteryX = batteryClip.x + (batteryClip.w-textWidth(battery,FontRole::Caption))/2;
-  text(fb,batteryClip,max(batteryClip.x,batteryX),67,battery,FontRole::Caption,kInkMuted);
+  text(fb,batteryClip,max(batteryClip.x,batteryX),batteryClip.y+64,battery,FontRole::Caption,kInkMuted);
   epd_draw_hline(0,kAppBarHeight-1,kCanvasWidth,kRule,fb);
 }
 
 void card(uint8_t* fb, Rect b, const char* eyebrow, const String& title, const String& body) {
   roundedRect(fb,b,12,kSurfaceSoft,kRule);
   const Rect clip{b.x+18,b.y+12,b.w-36,b.h-24};
-  text(fb,clip,clip.x,b.y+31,eyebrow,FontRole::Caption,kInkMuted);
-  text(fb,clip,clip.x,b.y+61,title,FontRole::PageHeading,kInk);
-  if (body.length()) text(fb,clip,clip.x,b.y+91,body,FontRole::Body,kInkMuted);
+  const bool compact = b.h < 100;
+  text(fb,clip,clip.x,b.y+(compact?25:31),eyebrow,FontRole::Caption,kInkMuted);
+  const FontRole titleRole = compact ? FontRole::CardHeading : FontRole::PageHeading;
+  const int titleBaseline = b.y + (compact ? 53 : 61);
+  text(fb,clip,clip.x,titleBaseline,fittedText(title,titleRole,clip.w),titleRole,kInk);
+  if (body.length() && b.h >= 92) {
+    const FontRole bodyRole = compact ? FontRole::Caption : FontRole::Body;
+    text(fb,clip,clip.x,b.y+(compact?78:91),fittedText(body,bodyRole,clip.w),bodyRole,kInkMuted);
+  }
 }
 
 void statusPill(uint8_t* fb, Rect b, const String& label, bool dark) {
@@ -186,8 +284,8 @@ void metricTile(uint8_t* fb, Rect b, Icon glyph, const char* label, const String
   roundedRect(fb,b,10,kPaper,kRule); icon(fb,glyph,b.x+28,b.y+28,22,kInk);
   const Rect clip{b.x+14,b.y+8,b.w-28,b.h-16};
   text(fb,clip,b.x+48,b.y+31,label,FontRole::Caption,kInkMuted);
-  text(fb,clip,b.x+16,b.y+67,value,FontRole::CardHeading,kInk);
-  if (detail.length()) text(fb,clip,b.x+16,b.y+94,detail,FontRole::Caption,kInkMuted);
+  text(fb,clip,b.x+16,b.y+67,fittedText(value,FontRole::CardHeading,clip.w-2),FontRole::CardHeading,kInk);
+  if (detail.length()) text(fb,clip,b.x+16,b.y+94,fittedText(detail,FontRole::Caption,clip.w-2),FontRole::Caption,kInkMuted);
 }
 
 void labeledRow(uint8_t* fb, Rect b, const char* label, const String& value, bool divider) {
@@ -195,7 +293,9 @@ void labeledRow(uint8_t* fb, Rect b, const char* label, const String& value, boo
   const Rect valueClip{b.x+b.w/2,b.y,b.w/2,b.h-2};
   text(fb,labelClip,b.x,b.y+31,label,FontRole::Body,kInkMuted);
   const int w=textWidth(value,FontRole::Body);
-  text(fb,valueClip,max(valueClip.x,b.x+b.w-w),b.y+31,value,FontRole::Body,kInk);
+  const String shown=fittedText(value,FontRole::Body,valueClip.w);
+  const int shownWidth=textWidth(shown,FontRole::Body);
+  text(fb,valueClip,max(valueClip.x,b.x+b.w-shownWidth),b.y+31,shown,FontRole::Body,kInk);
   if (divider) epd_draw_hline(b.x,b.y+b.h-1,b.w,kRule,fb);
 }
 
@@ -224,7 +324,7 @@ void dialog(uint8_t* fb, Rect b, const String& title, const String& body,
 
 Rect navigationTarget(Page page) {
   int index=0;
-  switch(page){case Page::Home:index=0;break;case Page::Systems:index=1;break;case Page::Radio:index=2;break;case Page::Location:index=3;break;case Page::Device:case Page::Diagnostics:case Page::DisplayCalibration:case Page::TextQualification:case Page::Settings:case Page::TouchSetup:index=4;break;}
+  switch(page){case Page::Home:case Page::SystemHealth:case Page::SystemMetrics:case Page::Storage:case Page::Network:case Page::WeatherDetail:case Page::VehicleMotion:case Page::Altimeter:index=0;break;case Page::Systems:index=1;break;case Page::Radio:index=2;break;case Page::Location:index=3;break;case Page::Device:case Page::Diagnostics:case Page::DisplayCalibration:case Page::TextQualification:case Page::Settings:case Page::TouchSetup:case Page::DisplayRefreshConfirm:case Page::Battery:case Page::TimezoneSetup:case Page::LowPowerSetup:case Page::LowPowerStatus:case Page::DisplayRefreshMode:case Page::TouchRecalibrateConfirm:index=4;break;case Page::WeatherSetup:index=0;break;}
   return {index*spec::kNavItemWidth,kContentBottom,spec::kNavItemWidth,kNavHeight};
 }
 
@@ -235,7 +335,7 @@ void bottomNavigation(uint8_t* fb, Page selected) {
   const Icon icons[]={Icon::Home,Icon::Systems,Icon::Radio,Icon::Location,Icon::Device};
   const char* labels[]={"HOME","SYSTEMS","RADIO","LOCATION","DEVICE"};
   for(int i=0;i<5;++i){
-    const bool active=(selected==pages[i])||((selected==Page::Diagnostics||selected==Page::DisplayCalibration||selected==Page::TextQualification||selected==Page::Settings||selected==Page::TouchSetup)&&i==4);
+    const bool active=(selected==pages[i])||((selected==Page::Diagnostics||selected==Page::DisplayCalibration||selected==Page::TextQualification||selected==Page::Settings||selected==Page::TouchSetup||selected==Page::DisplayRefreshConfirm||selected==Page::Battery||selected==Page::TimezoneSetup||selected==Page::LowPowerSetup||selected==Page::LowPowerStatus)&&i==4);
     const Rect target{i*spec::kNavItemWidth,kContentBottom,spec::kNavItemWidth,kNavHeight};
     epd_fill_rect({target.x,kContentBottom+3,target.w,kNavHeight-3},active?kInk:kPaper,fb);
     epd_draw_rect({target.x,kContentBottom+3,target.w,kNavHeight-3},kInk,fb);

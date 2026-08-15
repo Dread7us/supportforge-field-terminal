@@ -23,7 +23,11 @@ def render_header(spec):
         f"constexpr int kFramebufferStrideBytes = {spec['framebuffer']['stride_bytes']};",
     ]
     for key, value in g.items():
-        if isinstance(value, int): lines.append(f"constexpr int k{ident(key)} = {value};")
+        if isinstance(value, int):
+            lines.append(f"constexpr int k{ident(key)} = {value};")
+        elif isinstance(value, list) and len(value) == 4 and all(isinstance(item, int) for item in value):
+            values = ", ".join(map(str, value))
+            lines.append(f"constexpr int k{ident(key)}[4] = {{{values}}};")
     for key, value in p.items(): lines.append(f"constexpr uint8_t k{ident(key)} = 0x{value:02X};")
     for key, value in f["roles"].items():
         lines.append(f"constexpr int kFont{ident(key)}Pixels = {value};")

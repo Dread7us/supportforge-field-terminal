@@ -59,6 +59,7 @@ A portable **supportFORGE field terminal** for the LILYGO T5 E-Paper S3 Pro, com
 | Touch controller | ✅ Physically qualified | Four-corner mapping is persisted in NVS |
 | RTC | ✅ Observed | PCF8563-compatible device |
 | Battery fuel gauge | ✅ Observed | BQ27220 |
+| Battery telemetry | 🧪 Implemented | Bounded read-only SOC/charge classification; physical source-state checks remain |
 | GPS communication | ✅ Verified | L76K NMEA and valid fix observed |
 | SX1262 initialization | ✅ Verified | 915 MHz, receive-only |
 | LoRa transmission | 🔒 Locked | Intentionally unavailable |
@@ -91,6 +92,10 @@ The current firmware provides a retained-state, touch-first interface designed s
 - **Location** — GPS status and future navigation tools
 - **Device** — Field Terminal battery, Wi-Fi, endpoint, last synchronization, poll interval, temperature unit, manual refresh, and diagnostics
 - **Hardware Diagnostics** — structured qualification evidence
+- **Settings** — timezone, time format/sync, touch recalibration, and persisted low-power presets
+- **Weather Detail** — meaningful selected location, source/freshness, condition graphic, and current conditions
+- **Battery Detail** — large retained SOC, charge classification, and sample freshness
+- **Low Power Mode/Status** — OFF/5/15/30/60-minute timer-monitoring presets and explicit exit
 
 The interface uses:
 
@@ -213,27 +218,71 @@ date, never seconds.
 
 ### Field Terminal battery
 
-The BQ27220 has been observed at its expected I²C address, but this repository
-does not contain a physically qualified gauge data-memory profile and register
-contract for this battery pack. Firmware therefore performs no guessed SOC,
-flags, scaling, or charger-state reads and reports **BAT UNKNOWN** / `--` rather
-than fabricating a percentage. A percentage or `CHARGING` state must not be
-enabled until that contract is documented and physically qualified.
+Battery telemetry is deliberately limited to two documented, read-only paths:
+
+- BQ27220 at I²C `0x55`: StateOfCharge command/register `0x2C`, decoded as a
+  little-endian 16-bit word. Two consecutive reads must agree and the accepted
+  value must be within `0..100`.
+- BQ25896 at the board-qualified task address `0x6B`: read-only `REG0B`, using
+  `CHRG_STAT[4:3]` (`0x18`, shifted by three) for not-charging, charging, and full.
+
+No battery code writes gauge control/configuration, calibration, sealing, reset,
+data memory, or charger configuration. Sampling is conservative: 90 seconds in
+normal states and 45 seconds while charging, and only during scheduled awake
+windows in low-power mode. A failed or malformed transaction is rejected. A
+previously validated SOC may remain visible with an error classification while
+it is still fresh; after 270 seconds without a valid SOC it becomes `STALE` and
+the percentage changes to `--`.
+
+The displayed percentage is the gauge's reported SOC, not a laboratory capacity
+measurement. USB-C, wireless/MagSafe-style charging when available, unplugged
+operation, and discharge transitions still require observation on the actual
+device; software tests must not be presented as that physical evidence.
 
 ### Weather card
 
 HOME includes a distinct Field Conditions card backed by Open-Meteo. Weather is
-optional and configured only through the ignored `src/secrets.h`; documented
-placeholders for latitude, longitude, city label, and C/F unit are provided in
-`src/secrets.example.h`. The weather task observes the existing Wi-Fi connection
-but never starts, stops, or reconfigures Wi-Fi and never publishes into Guardian
-state. It polls no more often than every 15 minutes, retains the last good sample
-for up to 45 minutes, and reports `WX SETUP` or `WX OFFLINE` truthfully.
+optional and can be configured on-device by GPS, city search, postal code, or
+privacy-disclosed manual coordinates. City, region, country, and postal metadata
+are persisted in NVS. HOME displays an actual city/region or actual postal code;
+GPS/manual sources use privacy-preserving labels instead of coordinates and the
+generic word `POSTAL` is never used as the selected location.
 
-Weather diagnostics log only configured yes/no, result classification, and data
-validity. Coordinates, complete request URLs, and response bodies are never
-logged. Weather failures cannot increment Guardian failures, change the Guardian
+Weather Detail shows the selected location and source, freshness, a native
+monochrome condition graphic, current temperature/condition, feels-like, high and
+low, humidity, wind, and precipitation when those fields are available. Search
+results are bounded to five. `SAVE & FETCH` retains the selected postal value.
+Changing location or temperature unit clears old current-condition fields and
+the old icon until a new valid response arrives.
+
+The weather worker is isolated from Guardian state. It polls no more often than
+every 15 minutes, retains the last good sample for up to 45 minutes, and reports
+`WX SETUP`, `WX GPS FIX REQUIRED`, `WX STALE`, or `WX OFFLINE` truthfully.
+
+Weather diagnostics log only source class, configured yes/no, and result class.
+Postal values, city queries, coordinates, complete request URLs, and response
+bodies are never logged. Weather failures cannot increment Guardian failures, change the Guardian
 online/offline state, or affect its three-cycle alarm threshold.
+
+### Low-power timer monitoring
+
+Device Settings provides persisted presets of **OFF, 5, 15, 30, and 60 minutes**.
+This is timer monitoring, not deep sleep and not a claim that the unit is
+physically powered off. During inactive intervals Guardian and weather workers
+are suspended, Wi-Fi is disabled only after both workers are idle, LoRa receive
+is put to sleep with TX still locked, and the shared GPS/LoRa rail is disabled
+unless GPS weather explicitly requires the receiver. The user's separate GPS
+power preference is preserved across these policy-driven rail changes.
+
+Each scheduled check opens a bounded 45-second awake window for required network
+work, Guardian, weather if due, battery polling, and material rendering. Confirmed
+Guardian offline/auth alarm conditions hold the services awake and remain visible.
+The status page always offers **EXIT LOW POWER**.
+
+Because no sourced GT911 interrupt/wake GPIO has been safely verified, this
+firmware does **not** enter ESP32 deep sleep. Monitoring therefore runs only while
+the MCU remains powered. Removing power stops monitoring. Battery data can become
+truthfully stale between long scheduled windows.
 
 ---
 
@@ -252,6 +301,20 @@ online/offline state, or affect its three-cycle alarm threshold.
 pio run -e h752_02_candidate
 ```
 
+Release builds default to `SUPPORTFORGE_PERF_DIAGNOSTICS=0`. The deliberate
+qualification environment inherits the exact candidate flags and enables only
+the diagnostics macro:
+
+```powershell
+pio run -e h752_02_diagnostics
+```
+
+Diagnostics report only bounded timing/counter/resource classes: touch accepted,
+debounced and dropped counts; press-to-action; render wait; GC16 operation time;
+navigation latency; worker heartbeats; queue high-water marks; heap/PSRAM; and
+reset/watchdog classification. They never include credentials, endpoints, URLs,
+coordinates, query text, tokens, or response bodies.
+
 ### Upload
 
 Identify the correct serial port before uploading:
@@ -264,6 +327,13 @@ Then replace `COMx` with the verified device port:
 
 ```powershell
 pio run -e h752_02_candidate -t upload --upload-port COMx
+```
+
+For the single requested diagnostics qualification upload, use the diagnostics
+environment instead. Do not upload both images during an exactly-once session:
+
+```powershell
+pio run -e h752_02_diagnostics -t upload --upload-port COM15
 ```
 
 ### Serial monitor
@@ -318,6 +388,12 @@ The tests cover:
 - LoRa transmission-lock visibility
 - Display power-off ordering
 - Partial-refresh feature gating
+- Input routing before GPS/network/I²C/time/battery service polling
+- Bounded navigation/cosmetic render latch and truthful polling-only GC16 behavior
+- Read-only battery protocol, validation, freshness, and retained transient errors
+- Low-power preset persistence, awake windows, critical holds, and rail preference preservation
+- Timezone/compact-card geometry and non-overlap
+- Meaningful weather location persistence, async result redraw, invalidation, and privacy
 
 ---
 
@@ -327,15 +403,31 @@ E-paper is not treated like an ordinary LCD.
 
 At boot, the firmware:
 
-1. Resets the complete 960 × 540 packed physical composition buffer to `0xFF`
-   (both 4-bit nibbles white), then builds the complete 540 × 960 logical page.
-2. Verifies 64-byte canaries before and after the composition buffer.
-3. Copies the complete 259,200-byte frame to EPDiy.
-4. Immediately before the first corrected HOME frame, performs the guarded
-   LILYGO-derived physical recovery clear once per boot; this is never part of
-   normal navigation. On an unqualified unit this waits until touch setup completes.
-5. Performs one full-quality `MODE_GC16` update.
-6. Powers down the e-paper high-voltage circuitry.
+1. Initializes local buses, read-only battery observation, persisted settings,
+   touch state, and the guarded display coordinator.
+2. Performs one panel-wide LILYGO/EPDiy recovery clear on **every boot**. E-paper
+   is bistable, so retained pixels can survive MCU power loss; a persisted schema
+   revision cannot prove the physical panel is already clean.
+3. Presents a dedicated, full-screen monochrome startup page. Its progress bar
+   advances through completed milestones (`HARDWARE READY`, `STARTING SERVICES`,
+   `CONNECTING IN BACKGROUND`, `FIELD TERMINAL READY`) rather than estimating an
+   open-ended network operation from elapsed time.
+4. Starts Guardian and weather workers only after the initial clear/GC16 cycle
+   has powered panel high voltage off. Workers continue on core 0 while the
+   startup page is visible. Startup waits at most five seconds for an initial
+   settled result and then proceeds; connection/retry work remains asynchronous.
+5. Transitions with another complete known-white GC16 composition to HOME, or
+   to TOUCH SETUP when the saved touch mapping is not qualified.
+
+Every startup milestone is a complete 540×960 logical composition backed by the
+full 259,200-byte packed framebuffer; no startup region/partial update path exists.
+Because GC16 is synchronous, a progress step appears only after its full waveform
+finishes. The bar is functional state feedback, not a smooth animation.
+
+For every visible startup milestone and destination page, the coordinator resets
+the packed physical composition buffer to `0xFF`, verifies both 64-byte canaries,
+renders the whole logical page, copies all 259,200 bytes to EPDiy, performs one
+`MODE_GC16` update, and powers high voltage down.
 
 Normal page changes:
 
@@ -391,6 +483,15 @@ logicalY = rawX
 ```
 
 Coordinates are clamped to the logical 540 × 960 canvas. Tap handling includes movement rejection, debounce, press/release state, and one accepted action per release.
+
+The GT911 currently runs in polling mode because an interrupt pin/wake contract is
+not sourced. Accepted input is sampled and routed before background service work.
+However, `epd_hl_update_screen()` is synchronous: the Arduino loop cannot poll a
+touch that begins and ends entirely during a physical GC16 update. Reports present
+after an update are intentionally drained and a clean release is required, which
+prevents stale replay/double navigation but does not retain such an unseen touch.
+Do not describe this implementation as interrupt-backed or as guaranteeing one
+queued navigation touch during GC16.
 
 ---
 
@@ -468,7 +569,12 @@ Coordinates may eventually appear locally on the physical terminal when navigati
 9. Run `touch reset` only if deliberate touch requalification is required.
 10. Evaluate the remaining pages sparingly.
 11. Use `display white-test` only for deliberate once-per-boot panel diagnostics.
-12. Run `rail off` when radio and GPS testing is complete.
+12. Exercise battery states on USB-C, wireless/MagSafe-style charging if fitted,
+    unplugged operation, and discharge; record only observed classifications.
+13. Check all five timezone options, longest descriptions, selected marker, and Back.
+14. Check weather city/region or postal persistence and the no-data icon transition.
+15. Exercise each low-power preset and `EXIT LOW POWER`; confirm timer-monitoring wording.
+16. Run `rail off` when radio and GPS testing is complete.
 
 Record evidence in:
 
@@ -538,7 +644,8 @@ The local EPDiy snapshot is derived from LILYGO’s modified upstream source. It
 - [ ] Mesh protocol evaluation
 - [ ] LoRaWAN evaluation
 - [ ] OTA firmware updates
-- [ ] Low-power operating profiles
+- [x] Timer-monitoring low-power operating profiles
+- [ ] Deep sleep/wake qualification
 
 ---
 

@@ -9,7 +9,10 @@ namespace {
 constexpr ui::Rect kBack{24,112,112,56};
 constexpr ui::Rect kSubmit{278,780,238,64};
 constexpr ui::Rect kCancel{24,780,238,64};
-constexpr ui::Rect kPicker{24,238,492,420};
+constexpr int kKeyOriginX=24;
+constexpr int kKeyOriginY=246;
+constexpr int kKeyPitch=82;
+constexpr int kKeySize=74;
 constexpr ui::Rect kPickerPage{24,682,150,64};
 constexpr ui::Rect kPickerDelete{195,682,150,64};
 constexpr ui::Rect kPickerSpace{366,682,150,64};
@@ -85,7 +88,7 @@ WizardResult WeatherWizard::tap(ui::Rect point, const location::Snapshot& gps, W
 
   if (state_.step == WizardStep::Choice) {
     if (y>=112&&y<168&&x>=150) { state_.step=WizardStep::Preferences; return WizardResult::Changed; }
-    if (y>=176&&y<286) { state_.pendingSource=LocationSource::Gps; state_.step=WizardStep::Gps; }
+    if (y>=176&&y<286) { state_.pendingSource=LocationSource::Gps; manager.saveGps(); state_.step=WizardStep::Gps; }
     else if(y>=294&&y<404){state_.pendingSource=LocationSource::City;resetInput(InputKind::City);}
     else if(y>=412&&y<522){state_.pendingSource=LocationSource::Postal;resetInput(InputKind::Postal);}
     else if(y>=530&&y<640){state_.pendingSource=LocationSource::Manual;state_.latitude[0]=state_.longitude[0]=0;resetInput(InputKind::Latitude);}
@@ -95,20 +98,23 @@ WizardResult WeatherWizard::tap(ui::Rect point, const location::Snapshot& gps, W
   }
 
   if (state_.step == WizardStep::Gps) {
-    if (kSubmit.contains(x,y)) {
-      if (!location::currentFixUsable(gps)) { setError(state_,"VALID GPS FIX REQUIRED"); return WizardResult::Changed; }
-      state_.pendingSource=LocationSource::Gps;state_.step=WizardStep::Confirm;setError(state_,"");return WizardResult::Changed;
-    }
+    if (y>=520&&y<590) { state_.pendingSource=LocationSource::City;resetInput(InputKind::City);return WizardResult::Changed; }
+    if (y>=600&&y<670) { state_.pendingSource=LocationSource::Postal;resetInput(InputKind::Postal);return WizardResult::Changed; }
+    if (y>=680&&y<750) { state_.pendingSource=LocationSource::Manual;state_.latitude[0]=state_.longitude[0]=0;resetInput(InputKind::Latitude);return WizardResult::Changed; }
+    if (kSubmit.contains(x,y)) { manager.requestRefresh(millis());setError(state_,location::currentFixUsable(gps)?"GPS FIXED - WEATHER REQUESTED":"SEARCHING FOR GPS");return WizardResult::Changed; }
     if(kCancel.contains(x,y)){cancel();return WizardResult::Cancelled;}
   }
 
   if (state_.step == WizardStep::Input) {
     char* target = state_.inputKind == InputKind::Latitude ? state_.latitude :
                    (state_.inputKind == InputKind::Longitude ? state_.longitude : state_.input);
-    if (kPicker.contains(x,y)) {
-      const int column=(x-kPicker.x)/(kPicker.w/6), row=(y-kPicker.y)/(kPicker.h/5);
-      const char value=pickerCharacters(state_.inputKind,state_.characterPage)[row*6+column];
-      if(value!=' ')appendCharacter(value);return WizardResult::Changed;
+    for(int row=0;row<5;++row)for(int column=0;column<6;++column){
+      const ui::Rect key{kKeyOriginX+column*kKeyPitch,kKeyOriginY+row*kKeyPitch,kKeySize,kKeySize};
+      if(key.contains(x,y)){
+        const char value=pickerCharacters(state_.inputKind,state_.characterPage)[row*6+column];
+        if(value!=' ')appendCharacter(value);
+        return WizardResult::Changed;
+      }
     }
     if(kPickerPage.contains(x,y)){++state_.characterPage;return WizardResult::Changed;}
     if(kPickerDelete.contains(x,y)){const size_t n=strlen(target);if(n)target[n-1]=0;return WizardResult::Changed;}
@@ -141,7 +147,7 @@ WizardResult WeatherWizard::tap(ui::Rect point, const location::Snapshot& gps, W
 
   if(state_.step==WizardStep::Results){
     const Snapshot weather=manager.snapshot();
-    if(weather.searchState==SearchState::Complete&&y>=190&&y<690){uint8_t index=(y-190)/100;if(index<weather.resultCount){state_.selectedResult=index;state_.step=WizardStep::Confirm;return WizardResult::Changed;}}
+    if(weather.searchState==SearchState::Complete&&x>=24&&x<516&&y>=220&&y<708){uint8_t index=(y-220)/100;if(index<weather.resultCount&&y<220+index*100+88){state_.selectedResult=index;state_.step=WizardStep::Confirm;return WizardResult::Changed;}}
     if(kCancel.contains(x,y)){cancel();return WizardResult::Cancelled;}
   }
 
@@ -158,11 +164,11 @@ WizardResult WeatherWizard::tap(ui::Rect point, const location::Snapshot& gps, W
   }
 
   if(state_.step==WizardStep::Preferences){
-    if(y>=190&&y<290)manager.toggleTemperatureUnit();
-    else if(y>=306&&y<406)manager.toggleHomeOption(0);
-    else if(y>=422&&y<522)manager.toggleHomeOption(1);
-    else if(y>=538&&y<638)manager.toggleHomeOption(2);
-    else if(y>=654&&y<754)manager.toggleHomeOption(3);
+    if(y>=220&&y<306)manager.toggleTemperatureUnit();
+    else if(y>=322&&y<408)manager.toggleHomeOption(0);
+    else if(y>=424&&y<510)manager.toggleHomeOption(1);
+    else if(y>=526&&y<612)manager.toggleHomeOption(2);
+    else if(y>=628&&y<714)manager.toggleHomeOption(3);
     else if(kCancel.contains(x,y)){cancel();return WizardResult::Cancelled;}
     else return WizardResult::None;
     return WizardResult::Changed;

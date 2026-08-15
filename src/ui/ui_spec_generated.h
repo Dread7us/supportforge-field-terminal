@@ -5,7 +5,7 @@
 
 namespace ui {
 namespace spec {
-constexpr uint32_t kContractVersion = 4;
+constexpr uint32_t kContractVersion = 6;
 constexpr int kCanvasWidth = 540;
 constexpr int kCanvasHeight = 960;
 constexpr int kPhysicalWidth = 960;
@@ -19,6 +19,16 @@ constexpr int kNavHeight = 96;
 constexpr int kContentBottom = 864;
 constexpr int kMinimumTouchTarget = 56;
 constexpr int kNavItemWidth = 108;
+constexpr int kHeaderBrandBounds[4] = {24, 8, 270, 80};
+constexpr int kHeaderClockBounds[4] = {310, 8, 140, 80};
+constexpr int kHeaderBatteryBounds[4] = {462, 8, 66, 80};
+constexpr int kPrimaryContent[4] = {24, 120, 492, 728};
+constexpr int kDeviceDiagnosticsAction[4] = {24, 550, 492, 88};
+constexpr int kDeviceTouchSetupAction[4] = {24, 654, 492, 72};
+constexpr int kDeviceSettingsAction[4] = {24, 742, 492, 72};
+constexpr int kSettingsTimezoneAction[4] = {24, 300, 492, 96};
+constexpr int kSettingsFormatAction[4] = {24, 420, 492, 96};
+constexpr int kSettingsSyncAction[4] = {24, 650, 492, 96};
 constexpr uint8_t kInk = 0x00;
 constexpr uint8_t kInkMuted = 0x00;
 constexpr uint8_t kRule = 0x00;
@@ -42,11 +52,11 @@ constexpr int kTouchMappingToleranceY = 100;
 constexpr int kTouchTapSlop = 24;
 constexpr int kTouchSwipeMin = 88;
 constexpr int kTouchCrossAxisMax = 64;
-constexpr int kTouchMinPressMs = 50;
+constexpr int kTouchMinPressMs = 30;
 constexpr int kTouchMaxPressMs = 1200;
-constexpr int kTouchCleanReleaseMs = 500;
-constexpr int kTouchTransitionCooldownMs = 500;
-constexpr int kTouchPostRefreshQuietMs = 500;
+constexpr int kTouchCleanReleaseMs = 120;
+constexpr int kTouchTransitionCooldownMs = 120;
+constexpr int kTouchPostRefreshQuietMs = 150;
 
 constexpr int kHomeCardCount = 6;
 constexpr int kHomeCards[kHomeCardCount][4] = {{24, 128, 492, 154}, {24, 306, 238, 112}, {278, 306, 238, 112}, {24, 434, 238, 112}, {278, 434, 238, 112}, {24, 562, 492, 252}};

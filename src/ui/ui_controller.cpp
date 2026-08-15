@@ -15,6 +15,7 @@ EpdiyHighlevelState gDisplayState;
 constexpr size_t kFramebufferBytes = spec::kFramebufferStrideBytes * spec::kPhysicalHeight;
 constexpr size_t kGuardBytes = 64;
 constexpr uint8_t kGuardPattern = 0xA5;
+constexpr uint32_t kManualRefreshLimitMs = 45000;
 static_assert(spec::kFramebufferBitsPerPixel == 4, "renderer requires packed 4-bpp EPDiy frames");
 static_assert(spec::kFramebufferStrideBytes * 2 == spec::kPhysicalWidth,
               "packed framebuffer stride must contain exactly two pixels per byte");
@@ -23,7 +24,7 @@ static_assert(spec::kCanvasWidth == spec::kPhysicalHeight &&
               "inverted portrait logical and physical dimensions disagree");
 }
 
-bool UiController::begin() {
+bool DisplayCoordinator::begin() {
 #if defined(HQ_PROFILE_LEGACY_H752)
   return false;
 #else
@@ -41,30 +42,63 @@ bool UiController::begin() {
     memset(compositionBuffer_, 0xFF, kFramebufferBytes);
     memset(compositionBuffer_ + kFramebufferBytes, kGuardPattern, kGuardBytes);
   }
+  if (preferences_.begin("sf_display", false)) {
+    const uint8_t stored = preferences_.getUChar("refresh_mode", static_cast<uint8_t>(RefreshMode::Balanced));
+    refreshMode_ = stored <= static_cast<uint8_t>(RefreshMode::BeautifulClean)
+        ? static_cast<RefreshMode>(stored) : RefreshMode::Balanced;
+  }
+  Serial.printf("DISPLAY refresh_mode=%s persistence=NVS immediate=YES\n", refreshModeName(refreshMode_));
   initialized_ = epd_hl_get_framebuffer(&gDisplayState) != nullptr && compositionBuffer_ != nullptr;
   return initialized_;
 #endif
 }
 
-void UiController::setSnapshot(const UiSnapshot& snapshot) {
+bool DisplayCoordinator::setRefreshMode(RefreshMode mode) {
+  if (mode == refreshMode_) return false;
+  refreshMode_ = mode;
+  preferences_.putUChar("refresh_mode", static_cast<uint8_t>(mode));
+  requestRender(RenderPriority::Cosmetic);
+  Serial.printf("DISPLAY refresh_mode=%s persistence=NVS applied=IMMEDIATE\n", refreshModeName(mode));
+  return true;
+}
+
+void DisplayCoordinator::noteTouchAction(uint32_t actionReadyMs, uint32_t handledMs) {
+  if (actionReadyMs) lastTouchToActionMs_ = handledMs - actionReadyMs;
+}
+
+void DisplayCoordinator::requestRender(RenderPriority priority) {
+  ++renderRequestedCount_;
+  if (pendingRender_ == RenderPriority::None) pendingSinceMs_ = millis();
+  if (static_cast<uint8_t>(priority) > static_cast<uint8_t>(pendingRender_)) {
+    pendingRender_ = priority;
+  } else ++renderCoalescedCount_;
+}
+
+void DisplayCoordinator::setSnapshot(const UiSnapshot& snapshot) {
   const Page retainedPage = snapshot_.page;
-  if (materiallyDifferent(snapshot_, snapshot)) dirty_ = true;
+  if (materiallyDifferent(snapshot_, snapshot)) requestRender(RenderPriority::Cosmetic);
   snapshot_ = snapshot;
   snapshot_.page = retainedPage;
 }
 
-bool UiController::requestPage(Page page, uint32_t nowMs) {
+bool DisplayCoordinator::requestPage(Page page, uint32_t nowMs) {
   if (page == snapshot_.page || inputBlocked(nowMs)) return false;
   snapshot_.page = page;
-  dirty_ = true;
+  navigationRequestedMs_ = nowMs;
+  requestRender(RenderPriority::Navigation);
   return true;
 }
 
-bool UiController::inputBlocked(uint32_t nowMs) const {
+bool DisplayCoordinator::inputBlocked(uint32_t nowMs) const {
   return updating_ || (refreshCount_ && nowMs-lastRefreshMs_<static_cast<uint32_t>(spec::kTouchPostRefreshQuietMs));
 }
 
-bool UiController::framebufferGuardsIntact() const {
+bool DisplayCoordinator::manualRefreshAvailable(uint32_t nowMs) const {
+  return !updating_ && (!lastManualRefreshMs_ ||
+      nowMs - lastManualRefreshMs_ >= kManualRefreshLimitMs);
+}
+
+bool DisplayCoordinator::framebufferGuardsIntact() const {
   if (!guardedAllocation_ || !compositionBuffer_) return false;
   for (size_t index=0; index<kGuardBytes; ++index) {
     if (guardedAllocation_[index] != kGuardPattern ||
@@ -73,12 +107,18 @@ bool UiController::framebufferGuardsIntact() const {
   return true;
 }
 
-bool UiController::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
-  if (!initialized_ || !dirty_) return false;
+bool DisplayCoordinator::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
+  if (!initialized_ || pendingRender_ == RenderPriority::None) return false;
   uint8_t* framebuffer = epd_hl_get_framebuffer(&gDisplayState);
   if (!framebuffer) return false;
+  const RenderPriority renderingPriority = pendingRender_;
+  const uint32_t renderStartedMs = millis();
+  lastRenderWaitMs_ = pendingSinceMs_ ? renderStartedMs - pendingSinceMs_ : 0;
+  pendingRender_ = RenderPriority::None;
   updating_ = true;
-  const bool cleanupThisRender = bootRecovery && !fullClearUsed_;
+  const bool cleanupThisRender = (bootRecovery && !fullClearUsed_) ||
+      refreshMode_ == RefreshMode::BeautifulClean ||
+      (refreshMode_ == RefreshMode::Balanced && renderingPriority == RenderPriority::Navigation);
   bool displayPowered = false;
   if (cleanupThisRender) {
     // The high-level back buffer starts white and cannot know the panel's
@@ -86,7 +126,9 @@ bool UiController::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
     Serial.printf("DISPLAY cleanup=START page=%s\n", pageName(snapshot_.page));
     epd_poweron();
     displayPowered = true;
+    const uint32_t cleanupStartedMs = millis();
     epd_fullclear(&gDisplayState, epd_ambient_temperature());
+    lastFullCleanupDurationMs_ = millis() - cleanupStartedMs;
     fullClearUsed_ = true;
     Serial.println("DISPLAY cleanup=COMPLETE method=LILYGO_EPD_FULLCLEAR");
   }
@@ -98,7 +140,7 @@ bool UiController::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
   if (!framebufferGuardsIntact()) {
     if (displayPowered) epd_poweroff();
     Serial.println("DISPLAY canaries=CORRUPTED phase=PRE_COMPOSITION update=ABORTED");
-    updating_ = false; dirty_ = true; return false;
+    updating_ = false; requestRender(renderingPriority); return false;
   }
   Serial.println("DISPLAY retained_page_data=NONE white_reset=VERIFIED canaries_pre=INTACT");
   renderPage(compositionBuffer_, snapshot_);
@@ -106,26 +148,49 @@ bool UiController::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
     if (displayPowered) epd_poweroff();
     Serial.println("DISPLAY canaries=CORRUPTED update=ABORTED power=OFF");
     updating_ = false;
-    dirty_ = true;
+    requestRender(renderingPriority);
     return false;
   }
   Serial.println("DISPLAY canaries=INTACT");
   memcpy(framebuffer, compositionBuffer_, kFramebufferBytes);
   if (!displayPowered) epd_poweron();
+  const uint32_t gc16StartedMs = millis();
   const EpdDrawError result = epd_hl_update_screen(&gDisplayState, MODE_GC16, epd_ambient_temperature());
+  lastGc16DurationMs_ = millis() - gc16StartedMs;
   epd_poweroff();  // High voltage is shut down after every attempted update.
   updating_ = false;
-  lastRefreshMs_ = nowMs;
+  lastRefreshMs_ = millis();
   ++refreshCount_;
-  dirty_ = result != EPD_DRAW_SUCCESS;
-  Serial.printf("DISPLAY render=GC16 page=%s count=%lu result=%d\n",
-                pageName(snapshot_.page), static_cast<unsigned long>(refreshCount_),
+  ++renderRenderedCount_;
+  lastRenderDurationMs_ = millis() - renderStartedMs;
+  if (renderingPriority == RenderPriority::Navigation && navigationRequestedMs_) {
+    lastNavigationLatencyMs_ = millis() - navigationRequestedMs_;
+    lastPageTransitionDurationMs_ = lastNavigationLatencyMs_;
+    navigationRequestedMs_ = 0;
+  }
+  if (result == EPD_DRAW_SUCCESS) {
+    failedUpdateRetryUsed_ = false;
+  } else if (!failedUpdateRetryUsed_) {
+    failedUpdateRetryUsed_ = true;
+    requestRender(renderingPriority);
+    Serial.println("DISPLAY retry=QUEUED limit=ONE");
+  } else {
+    Serial.println("DISPLAY retry=SUPPRESSED reason=REPEATED_UPDATE_FAILURE");
+  }
+  Serial.printf("DISPLAY render=GC16 page=%s mode=%s cleanup=%s gc16_ms=%lu cleanup_ms=%lu transition_ms=%lu count=%lu result=%d\n",
+                pageName(snapshot_.page), refreshModeName(refreshMode_), cleanupThisRender?"YES":"NO",
+                static_cast<unsigned long>(lastGc16DurationMs_),
+                static_cast<unsigned long>(cleanupThisRender?lastFullCleanupDurationMs_:0),
+                static_cast<unsigned long>(lastPageTransitionDurationMs_),
+                static_cast<unsigned long>(refreshCount_),
                 static_cast<int>(result));
   Serial.println("DISPLAY high_voltage=OFF");
   return result == EPD_DRAW_SUCCESS;
 }
 
-bool UiController::renderWhiteTest(uint32_t nowMs) {
+void DisplayCoordinator::printPerformance()const{Serial.printf("PERF refresh_mode=%s render_requested=%lu render_rendered=%lu render_coalesced=%lu touch_to_action_software_ms=%lu render_wait_ms=%lu gc16_duration_ms=%lu full_cleanup_duration_ms=%lu page_transition_duration_ms=%lu navigation_latency_ms=%lu render_queue_hwm=1 heap_free=%u heap_min=%u psram_free=%u\n",refreshModeName(refreshMode_),static_cast<unsigned long>(renderRequestedCount_),static_cast<unsigned long>(renderRenderedCount_),static_cast<unsigned long>(renderCoalescedCount_),static_cast<unsigned long>(lastTouchToActionMs_),static_cast<unsigned long>(lastRenderWaitMs_),static_cast<unsigned long>(lastGc16DurationMs_),static_cast<unsigned long>(lastFullCleanupDurationMs_),static_cast<unsigned long>(lastPageTransitionDurationMs_),static_cast<unsigned long>(lastNavigationLatencyMs_),ESP.getFreeHeap(),ESP.getMinFreeHeap(),ESP.getFreePsram());}
+
+bool DisplayCoordinator::renderWhiteTest(uint32_t nowMs) {
   if (!initialized_ || whiteTestUsed_ || updating_) return false;
   whiteTestUsed_ = true;
   uint8_t* framebuffer=epd_hl_get_framebuffer(&gDisplayState);
@@ -133,7 +198,9 @@ bool UiController::renderWhiteTest(uint32_t nowMs) {
   updating_=true;
   Serial.println("DISPLAY white_test=START guard=ONCE_PER_BOOT cleanup=START");
   epd_poweron();
+  const uint32_t cleanupStartedMs=millis();
   epd_fullclear(&gDisplayState,epd_ambient_temperature());
+  lastFullCleanupDurationMs_=millis()-cleanupStartedMs;
   memset(compositionBuffer_,0xFF,kFramebufferBytes);
   if(!framebufferGuardsIntact()){
     epd_poweroff();updating_=false;
@@ -144,14 +211,53 @@ bool UiController::renderWhiteTest(uint32_t nowMs) {
   epd_draw_rect({5,5,kCanvasWidth-10,kCanvasHeight-10},kInk,compositionBuffer_);
   text(compositionBuffer_,{20,20,500,64},20,56,"WHITE TEST",FontRole::PageHeading,kInk);
   memcpy(framebuffer,compositionBuffer_,kFramebufferBytes);
+  const uint32_t gc16StartedMs=millis();
   const EpdDrawError result=epd_hl_update_screen(&gDisplayState,MODE_GC16,epd_ambient_temperature());
-  epd_poweroff();updating_=false;lastRefreshMs_=nowMs;++refreshCount_;
+  lastGc16DurationMs_=millis()-gc16StartedMs;
+  epd_poweroff();updating_=false;lastRefreshMs_=millis();++refreshCount_;
   Serial.printf("DISPLAY white_test=COMPLETE render=GC16 result=%d canaries=INTACT\n",static_cast<int>(result));
   Serial.println("DISPLAY high_voltage=OFF");
   return result==EPD_DRAW_SUCCESS;
 }
 
-bool UiController::dumpPackedFramebuffer(Page page) {
+bool DisplayCoordinator::manualFullRefresh(uint32_t nowMs, Page returnPage) {
+  if (!initialized_ || !manualRefreshAvailable(nowMs) || !compositionBuffer_) return false;
+  uint8_t* framebuffer=epd_hl_get_framebuffer(&gDisplayState);
+  if(!framebuffer)return false;
+  updating_=true;
+  lastManualRefreshMs_=nowMs;
+  const Page previousPage=snapshot_.page;
+  Serial.printf("DISPLAY manual_refresh=ACKNOWLEDGED message=REFRESHING_DISPLAY return_page=%s\n",
+                pageName(returnPage));
+  epd_poweron();
+  const uint32_t cleanupStartedMs=millis();
+  epd_fullclear(&gDisplayState,epd_ambient_temperature());
+  lastFullCleanupDurationMs_=millis()-cleanupStartedMs;
+  fullClearUsed_=true;
+  memset(compositionBuffer_,0xFF,kFramebufferBytes);
+  UiSnapshot returnSnapshot=snapshot_;
+  returnSnapshot.page=returnPage;
+  renderPage(compositionBuffer_,returnSnapshot);
+  if(!framebufferGuardsIntact()){
+    epd_poweroff();updating_=false;
+    Serial.println("DISPLAY manual_refresh=ABORTED canaries=CORRUPTED high_voltage=OFF");
+    return false;
+  }
+  memcpy(framebuffer,compositionBuffer_,kFramebufferBytes);
+  const uint32_t gc16StartedMs=millis();
+  const EpdDrawError result=epd_hl_update_screen(&gDisplayState,MODE_GC16,epd_ambient_temperature());
+  lastGc16DurationMs_=millis()-gc16StartedMs;
+  epd_poweroff();updating_=false;lastRefreshMs_=millis();++refreshCount_;++renderRenderedCount_;
+  lastRenderDurationMs_=lastFullCleanupDurationMs_+lastGc16DurationMs_;
+  if(result==EPD_DRAW_SUCCESS)snapshot_.page=returnPage;
+  else{snapshot_.page=previousPage;requestRender(RenderPriority::Navigation);}
+  Serial.printf("DISPLAY manual_refresh=COMPLETE cleanup=FULLCLEAR render=GC16 page=%s result=%d state=PRESERVED gc16_ms=%lu cleanup_ms=%lu\n",
+                pageName(returnPage),static_cast<int>(result),static_cast<unsigned long>(lastGc16DurationMs_),static_cast<unsigned long>(lastFullCleanupDurationMs_));
+  Serial.println("DISPLAY high_voltage=OFF");
+  return result==EPD_DRAW_SUCCESS;
+}
+
+bool DisplayCoordinator::dumpPackedFramebuffer(Page page) {
   if (!initialized_ || updating_ || !compositionBuffer_) return false;
   updating_ = true;
   memset(compositionBuffer_, 0xFF, kFramebufferBytes);

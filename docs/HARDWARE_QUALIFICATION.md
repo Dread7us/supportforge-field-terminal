@@ -18,6 +18,16 @@
 
 Upstream repository: <https://github.com/Xinyuan-LilyGO/T5S3-4.7-e-paper-PRO>
 
+Official component references used for the bounded battery contract:
+
+- TI BQ27220 product page and datasheet: <https://www.ti.com/product/BQ27220>
+- TI BQ25896 product page and datasheet: <https://www.ti.com/product/BQ25896>
+- LILYGO T5 E-Paper S3 Pro repository: <https://github.com/Xinyuan-LilyGO/T5S3-4.7-e-paper-PRO>
+
+The firmware's `0x6B` BQ25896 address is the explicit fitted-board/task contract
+to be checked on the device. It must not be generalized from a different charger
+variant or silently changed based only on a generic datasheet address.
+
 Revision inspected: `5067e1fd6a66cf8b06e0b484070dc1b405eac1aa`.
 
 Product evidence: the official LILYGO store page identifies SKU `H752-02` as
@@ -73,18 +83,30 @@ and current-Pro display tests rather than guessing.
   packed framebuffer, renders into a separately guarded PSRAM buffer, verifies
   64-byte canaries, and only then copies the complete frame to EPDiy. High voltage
   is powered off after every update. Partial refresh is OFF.
-- Corrected HOME performs one guarded LILYGO-derived `epd_fullclear()` per boot,
-  followed by known-white composition and one GC16 render. Normal navigation
-  never full-clears and repeated cleanup cycles are prevented.
+- UI cleanup revision 10 records the current startup contract. One guarded
+  LILYGO-derived `epd_fullclear()` runs on every boot because the bistable panel
+  can retain an image across MCU power loss. The in-RAM guard still limits this
+  to one panel-wide clear per boot; normal navigation never full-clears.
+- A dedicated full-screen startup page advances through completed hardware,
+  worker-start, connecting, and ready milestones. Each visible step is a complete
+  known-white `MODE_GC16` composition, never a region or partial update. Guardian
+  and weather workers begin only after the first high-voltage cycle powers off,
+  run in the background, and receive a bounded five-second initial settling
+  window. The percentages are milestone labels, not elapsed-time predictions.
 - The sourced candidate SPI/radio pins overlap EPD v7 parallel-data GPIOs.
   Display refresh therefore pauses receive mode and releases Arduino SPI GPIO
   ownership first. This is a candidate-profile mitigation, not proof that the
   SKU's final electrical map is confirmed.
 - GPS diagnostics redact NMEA payloads and coordinates by default.
-- BQ27220 presence does not qualify SOC. Until an official, pack-specific
-  register/data-memory contract is documented and physically verified, firmware
-  performs no gauge data reads and reports `BAT UNKNOWN` rather than a percent or
-  charging state.
+- Battery sampling is read-only and bounded. BQ27220 `0x55` StateOfCharge `0x2C`
+  is read twice, little-endian, and accepted only when both values agree in
+  `0..100`. BQ25896 board address `0x6B` `REG0B` is read for `CHRG_STAT[4:3]`.
+  There are no gauge/charger configuration, control, seal, reset, calibration, or
+  data-memory writes. Sampling is 90 seconds normally, 45 seconds while charging,
+  and only in scheduled awake windows. A still-fresh validated SOC may be retained
+  across a failed attempt while the state reports error; after 270 seconds without
+  a valid SOC the UI reports stale and hides the percentage. This contract does
+  not prove pack capacity accuracy or replace physical charge/discharge testing.
 - The clock defaults to UTC/24-hour, uses NTP after existing Wi-Fi connectivity,
   and treats a PCF8563 voltage-low indication as invalid. Weather is an isolated,
   Wi-Fi-passive Open-Meteo consumer with sanitized diagnostics and a 15-minute
@@ -98,6 +120,41 @@ and current-Pro display tests rather than guessing.
   board profile does not identify a GT911 interrupt GPIO, so touch is polled and
   diagnostics explicitly report IRQ observation as unavailable rather than
   guessing a pin.
+- Touch is routed before GPS, weather-position publication, low-power/network
+  policy, time, and battery polling. The display coordinator owns a one-slot
+  priority latch where navigation outranks and background demand coalesces.
+  Physical GC16 remains synchronous, so polling cannot observe a touch that begins
+  and ends entirely inside `epd_hl_update_screen()`. Post-update report draining
+  prevents replay but is not a guarantee that one next navigation action is retained.
+- Low-power presets OFF/5/15/30/60 are persisted in `sf_power`. Active presets use
+  45-second scheduled windows, suspend workers between windows, turn Wi-Fi off only
+  after both workers are idle, sleep LoRa RX, and disable the shared rail unless GPS
+  weather requires it. Policy rail changes preserve the user's GPS preference.
+  Guardian confirmed-offline/auth conditions hold services awake. This is timer
+  monitoring only: no GT911 wake IRQ is sourced and no deep sleep is used.
+- Timezone setup presents five non-overlapping options, descriptions, selected
+  markers, and Back using full-frame clearing. Compact Settings cards use a separate
+  reflow rather than shrinking/clipping the shared layout.
+- Weather configuration persists city, region, country, and postal metadata. HOME
+  shows a meaningful selected location; GPS/manual labels preserve coordinate
+  privacy. Detail current fields and the condition icon are invalidated on location
+  or unit changes. Logs exclude postal/city query, coordinates, URLs, and bodies.
+
+## Performance diagnostics qualification
+
+Release default is `SUPPORTFORGE_PERF_DIAGNOSTICS=0`. Build the single intended
+qualification image with `pio run -e h752_02_diagnostics`; that environment inherits
+the candidate board flags and sets the macro to `1`. Do not enable coordinate touch debug.
+The expected allowlisted metrics are press-to-action, accepted/debounced/dropped/
+coalesced input counts, render wait, physical GC16 operation duration, navigation
+latency, worker heartbeats, queue high-water marks, heap/PSRAM, and reset/watchdog
+classification. Review logs for accidental credentials, endpoint URLs, coordinates,
+postal/city queries, tokens, and request/response bodies before retaining evidence.
+
+GC16 duration and software/input delay must be reported separately. A long physical
+waveform is not evidence that touch routing waited on networking, GPS, I²C, NTP, or
+weather. Conversely, polling cannot measure a contact never observed during the
+synchronous update.
 
 ## UI rendering fidelity
 
@@ -123,7 +180,7 @@ behavior; those require direct physical acceptance.
 ## Required physical UI acceptance after upload
 
 Do not promote the corrected UI to physically verified from compilation, serial
-output, or PNG review. Ask the operator to confirm all ten items:
+output, or PNG review. Ask the operator to confirm all items:
 
 1. Old blocks and bands are gone.
 2. No horizontal line crosses text.
@@ -135,6 +192,22 @@ output, or PNG review. Ask the operator to confirm all ten items:
 8. Guided touch setup accepts all four corners.
 9. Bottom navigation works.
 10. No stale content appears after one page change.
+11. Battery transitions clear correctly at `100→99`, `99→9`, `9→--`, and `--→valid`.
+12. Battery percentage remains legible across black fill and white unfilled regions;
+    the static charging mark remains visible in both.
+13. USB-C, wireless/MagSafe-style charging if fitted, unplugged, and discharge states
+    match observed behavior without claiming precision beyond the gauge SOC.
+14. All five timezone labels/descriptions, selected markers, touch targets, and Back
+    are visible and aligned.
+15. HOME shows the actual city/region or postal value; Weather Detail shows source,
+    freshness, useful current fields, and no stale icon after Save & Fetch/unit change.
+16. OFF/5/15/30/60 low-power presets persist; status says timer monitoring and
+    `EXIT LOW POWER` works. Confirm monitoring stops if physical power is removed.
+17. Diagnostics timing logs separate press-to-action/render wait/navigation latency
+    from GC16 duration and contain no private configuration.
+18. Every cold/restart boot visibly clears the entire panel, shows the polished
+    milestone progress page without retained blocks or region-only artifacts, and
+    transitions to HOME/TOUCH SETUP after the bounded connection window.
 
 Hardware Diagnostics includes a temporary labeled grayscale qualification strip
 for identifying which theme levels remain physically distinct. It is not shown
@@ -166,9 +239,14 @@ Fill this from captured serial output and direct observation. Do not infer.
 | 915 MHz receive | `lora rx` + known transmitter | **UNREPORTED** | |
 | L76K UART activity | `gps listen` | **UNREPORTED** | |
 | GPS valid outdoor fix | inspect NMEA | **UNREPORTED** | |
-| ED047TC1 display | revision-6 cleanup + corrected HOME | **PHYSICALLY ACCEPTED** | Operator accepted typography, icon balance, no clipping/overlap, and background cleanup |
+| ED047TC1 display | revision-10 every-boot clear + full-screen startup progress + corrected pages | **PHYSICAL RECHECK REQUIRED** | Previous HOME was accepted; startup sequence and revised battery/weather/timezone/low-power pages require direct acceptance |
 | Touch | persisted four-corner result | **PHYSICALLY VERIFIED** | Qualification retained in NVS; do not reset during typography work |
 | RTC / charger / gauge | I²C identity first | **UNREPORTED** | |
+| Battery USB-C / wireless / unplugged / discharge | Observe read-only SOC and charge class | **PHYSICAL CHECK REQUIRED** | Do not infer from build or unit tests |
+| Timezone five-option layout | Settings → Timezone | **PHYSICAL CHECK REQUIRED** | Longest descriptions, marker, Back, touch alignment |
+| Weather meaningful location | HOME + Weather Detail | **PHYSICAL CHECK REQUIRED** | City/region or postal; no coordinate disclosure |
+| Timer-monitoring low power | OFF/5/15/30/60 + exit | **PHYSICAL CHECK REQUIRED** | Not deep sleep; removal of power stops monitoring |
+| Performance diagnostics | 60-second allowlisted PERF records | **PHYSICAL CHECK REQUIRED** | Separate GC16 duration from software latency |
 | SD card | `sd test` read-only mount | **PHYSICAL CHECK REQUIRED** | |
 
 ## Reporting template

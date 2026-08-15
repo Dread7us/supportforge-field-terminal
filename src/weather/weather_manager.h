@@ -2,6 +2,7 @@
 
 #include <Preferences.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
 #include <freertos/semphr.h>
 #include <stdint.h>
 
@@ -16,6 +17,10 @@ enum class SearchState : uint8_t { Idle, Pending, Complete, Offline, Invalid };
 
 struct SearchResult {
   char label[48]{};
+  char city[32]{};
+  char region[32]{};
+  char country[24]{};
+  char postal[12]{};
   double latitude = 0.0;
   double longitude = 0.0;
 };
@@ -26,8 +31,18 @@ struct Snapshot {
   bool configured = false;
   bool dataAvailable = false;
   bool feelsLikeAvailable = false;
+  bool highLowAvailable = false;
+  bool humidityAvailable = false;
+  bool windAvailable = false;
+  bool precipitationAvailable = false;
   int16_t temperatureTenths = 0;
   int16_t feelsLikeTenths = 0;
+  int16_t highTenths = 0;
+  int16_t lowTenths = 0;
+  uint8_t humidityPercent = 0;
+  uint16_t windSpeedTenths = 0;
+  uint16_t windDirectionDegrees = 0;
+  uint8_t precipitationPercent = 0;
   uint8_t weatherCode = 255;
   TemperatureUnit temperatureUnit = TemperatureUnit::Celsius;
   bool showTemperature = true;
@@ -35,6 +50,9 @@ struct Snapshot {
   bool showCity = true;
   bool showFeelsLike = false;
   char city[32]{};
+  char region[32]{};
+  char country[24]{};
+  char postal[12]{};
   uint32_t lastSuccessMs = 0;
   SearchState searchState = SearchState::Idle;
   uint8_t resultCount = 0;
@@ -56,6 +74,10 @@ class WeatherManager {
   void toggleTemperatureUnit();
   void toggleHomeOption(uint8_t option);
   bool requestRefresh(uint32_t nowMs);
+  void setSuspended(bool suspended);
+  bool suspended() const;
+  bool idle() const;
+  uint32_t heartbeat() const;
 
  private:
   static void taskEntry(void* context);
@@ -63,8 +85,11 @@ class WeatherManager {
   void poll(uint32_t nowMs);
   void geocode();
   void publish(const Snapshot& next);
-  bool persist(LocationSource source, double latitude, double longitude, const char* label);
+  bool persist(LocationSource source, double latitude, double longitude,
+               const char* city, const char* region, const char* country,
+               const char* postal);
   mutable SemaphoreHandle_t mutex_ = nullptr;
+  mutable portMUX_TYPE controlMux_ = portMUX_INITIALIZER_UNLOCKED;
   Preferences preferences_;
   Snapshot snapshot_{};
   double savedLatitude_ = 0.0;
@@ -76,11 +101,16 @@ class WeatherManager {
   char requestedSearch_[48]{};
   char requestedCountry_[3]{'U', 'S', 0};
   bool forceRefresh_ = false;
+  bool displayPreferencesDirty_ = false;
+  uint32_t displayPreferencesDueMs_ = 0;
   uint32_t nextPollMs_ = 0;
   uint32_t lastManualRefreshMs_ = 0;
   double lastRequestLatitude_ = 0.0;
   double lastRequestLongitude_ = 0.0;
   bool lastRequestPositionValid_ = false;
+  bool suspended_ = false;
+  bool inFlight_ = false;
+  uint32_t heartbeat_ = 0;
 };
 
 const char* stateName(State value);

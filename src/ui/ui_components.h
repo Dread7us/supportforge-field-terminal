@@ -11,7 +11,7 @@ namespace ui {
 
 enum class Icon : uint8_t { Home, Systems, Radio, Location, Device, Battery, Lock, Check, Info };
 enum class FontRole : uint8_t {
-  Caption, Body, CardHeading, PageHeading, Brand, Metric, Navigation,
+  Caption, Body, CardHeading, PageHeading, Brand, Metric, VehicleSpeed, AltimeterMetric, Navigation,
   QualificationCurrent, QualificationRegularAa, QualificationMediumAa,
   QualificationSemiboldAa, QualificationBoldMono
 };
@@ -23,9 +23,14 @@ void text(uint8_t* fb, Rect clip, int x, int baseline, const String& value,
 int textWidth(const String& value, FontRole role = FontRole::Body);
 int textHeight(FontRole role = FontRole::Body);
 bool textFits(const String& value, FontRole role, Rect region);
+String fittedText(const String& value, FontRole role, int width);
+int centeredBaseline(Rect bounds, FontRole role);
 void icon(uint8_t* fb, Icon value, int cx, int cy, int size, uint8_t color = kInk);
+void batteryIcon(uint8_t* fb, Rect bounds, battery::State state,
+                 bool percentAvailable, uint8_t percent, uint8_t color = kInk);
 void circle(uint8_t* fb, int cx, int cy, int radius, uint8_t color = kInk);
 void appBar(uint8_t* fb, const UiSnapshot& state, const char* section = nullptr);
+void globalRefreshControl(uint8_t* framebuffer);
 void card(uint8_t* fb, Rect bounds, const char* eyebrow, const String& title,
           const String& body = "");
 void statusPill(uint8_t* fb, Rect bounds, const String& label, bool dark = false);
