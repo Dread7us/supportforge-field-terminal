@@ -28,7 +28,9 @@ The firmware's `0x6B` BQ25896 address is the explicit fitted-board/task contract
 to be checked on the device. It must not be generalized from a different charger
 variant or silently changed based only on a generic datasheet address.
 
-Revision inspected: `5067e1fd6a66cf8b06e0b484070dc1b405eac1aa`.
+Original EPD baseline revision inspected: `5067e1fd6a66cf8b06e0b484070dc1b405eac1aa`.
+Front-light evidence was rechecked at official `H752-01` head
+`587632e0c6ac327741b8c5e0d14c9e29f154b101`.
 
 Product evidence: the official LILYGO store page identifies SKU `H752-02` as
 “915Mhz With GPS [H752-02]”. The same page lists SX1262 and supports 915 MHz.
@@ -50,9 +52,87 @@ The `h752_02_candidate` environment uses the official repository's current
 | PCA9535 | I²C `0x20` | README, pin map, IO example |
 | LoRa/GPS rail enable | PCA9535 P0.0 | `H752-01:docs/pinmap.md` |
 | E-paper baseline | `epd_board_v7`, ED047TC1, 960×540 | official display test |
+| Front-light evidence | GPIO 11, active-high PWM; **disabled in this candidate** | `docs/pinmap.md`, `examples/factory/main/utilities.h`, `ui_port.cpp` |
 | PlatformIO board manifest | `boards/T5-ePaper-S3.json` | official H752-01 repository |
 
 This is a **candidate**, not confirmation that the physical unit matches.
+
+### Front-light evidence and bounded qualification
+
+Evidence is ranked below in the required order. The installed unit's PCB/revision
+marking is still unreported, so evidence for the official current-Pro V1.0 design
+cannot yet be promoted to exact-board proof for this physical H752-02.
+
+| Authority | Revision / applicability | GPIO 11 role | Confidence |
+|---|---|---|---|
+| Official schematic | `T5 E-paper S3 Pro V1.0 24-12-24`, official H752-01 repository; physical PCB match unconfirmed | ESP32-S3 IO11 → `BL_EN` → PT4103B23F EN; EPD is D0–D7 only | High for V1.0 design; insufficient for installed PCB |
+| Official factory firmware | H752-01 head `587632e`; `utilities.h` + `ui_port.cpp` | `BOARD_BL_EN (11)`, active-high Arduino PWM duties 0/50/100/230 | High for current factory target |
+| Official pin definitions | H752-01 head `587632e`; `docs/pin_define.md` / `docs/pinmap.md` | `BOARD_BL_EN (11)` / `PIN_BL_EN`; EPD D0–D7 are 5,6,7,15,16,17,18,8 | High for documented V1.0 target |
+| Official display test | H752-01 head `587632e`; `m5gfx_display_test/main.ino` | GPIO11 backlight; 8-bit EPD bus excludes GPIO11 | High for current official display implementation |
+| Active local EPD profile | vendored official `epd_board_v7` introduced at H752-01 commit `9e2ab63`, retained at local provenance `5067e1f` | Incorrectly claims D10 = GPIO11 as part of stale 16-bit upper byte | High that the compiled conflict is real; low as current-Pro wiring authority |
+| Derived/local profile | `include/board_profile.h` | Candidate PWM GPIO11, capability disabled | Conservative implementation contract |
+
+**Root cause:** the official repository's current-Pro schematic, factory code, pin
+definitions, and M5GFX display implementation consistently describe an 8-bit EPD
+bus and GPIO11 front light. Its EPDiy v7 file simultaneously retains a stale
+16-bit upper-byte mapping (`D8..D15`) that consumes GPIO9–14/21/47. The local
+firmware compiles that stale profile, so the software conflict is genuine even
+though it is not supported by the current-Pro schematic. Correcting the display
+backend/profile is warranted only after the installed PCB is matched to that
+schematic and the replacement 8-bit EPD path is qualified.
+
+**Decision for this task:** front-light capability remains disabled. No
+front-light claim, write, or probe is introduced, and no executable LOW
+qualification path is prepared. Missing evidence is a clear photograph/report of
+the installed PCB model and revision marking (or an exact official schematic
+explicitly naming that marking) proving that this unit is the
+`T5 E-paper S3 Pro V1.0 24-12-24` electrical design.
+
+At commit `587632e0c6ac327741b8c5e0d14c9e29f154b101`, LILYGO's official
+`H752-01` sources provide the following exact evidence:
+
+- `docs/pinmap.md` identifies “Backlight enable / PWM”, `PIN_BL_EN`, GPIO 11,
+  and says `BL_EN` drives the PT4103B23F `EN` input.
+- `examples/factory/main/utilities.h` defines `BOARD_BL_EN (11)`.
+- `examples/m5gfx_display_test/main.ino` drives GPIO 11 `LOW` to keep the light
+  off, establishing active-high enable behavior.
+- `examples/factory/main/ui_port.cpp` uses Arduino `analogWrite(BOARD_BL_EN, …)`
+  with duties `0`, `50`, `100`, and `230`. It does not configure an explicit
+  custom PWM frequency or resolution. The firmware therefore preserves the same
+  Arduino-ESP32 default PWM mechanism and exact sourced 8-bit presets instead of
+  inventing timer parameters.
+
+These sources establish H752-01 intent, not physical presence or identical wiring
+on SKU H752-02. The EPDiy `epd_board_v7` definition currently compiled by this
+firmware assigns GPIO 11 to parallel EPD data line D10. Until an official display
+definition resolving that conflict is sourced and the H752-02 unit is physically
+qualified, `frontLightCandidateAvailable` remains false: `FrontLightManager` does
+not claim or write GPIO 11 and the UI reports `FRONT LIGHT NOT QUALIFIED`. The
+`FRONT LIGHT NOT DETECTED` result is reserved for a future authorized physical
+qualification failure. No alternative pin may be tried.
+
+Minimal physical confirmation after the installed PCB revision is proven, an
+official non-conflicting display mapping is integrated, and explicit upload
+authorization is received:
+
+1. Power from a current-limited, known-good USB supply; leave LoRa TX locked and
+   do not run battery/charger configuration commands.
+2. Before enabling the capability, add a reviewed one-time migration that writes
+   the `sf_frontlight/level` preference to OFF; verify that migration while the
+   capability is still false, then remove it. This prevents stale NVS from
+   restoring a nonzero duty on the first qualification boot.
+3. Enable only the GPIO 11 capability flag; do not alter or probe any other pin.
+4. Boot and verify the front light remains OFF through display and local-service
+   initialization.
+5. Expose a one-time LOW-only action that automatically returns to OFF after a
+   bounded few seconds, while allowing an earlier explicit OFF selection. Do not
+   expose or test MEDIUM/HIGH in this qualification image.
+6. Select LOW once and observe only whether a uniform front light appears. Confirm
+   automatic OFF and no display corruption, reset, abnormal heating, or unexpected
+   radio, GPS, touch, or battery behavior.
+7. If GPIO 11 produces no light or any abnormal behavior, select OFF, remove
+   power, mark the exact device **FRONT LIGHT NOT DETECTED**, disable the profile
+   capability in firmware, and do not probe other GPIOs.
 
 ### Why H752 definitions are not silently mixed
 
@@ -100,7 +180,8 @@ and current-Pro display tests rather than guessing.
 - GPS diagnostics redact NMEA payloads and coordinates by default.
 - Battery sampling is read-only and bounded. BQ27220 `0x55` StateOfCharge `0x2C`
   is read twice, little-endian, and accepted only when both values agree in
-  `0..100`. BQ25896 board address `0x6B` `REG0B` is read for `CHRG_STAT[4:3]`.
+  `0..100`. BQ25896 board address `0x6B` `REG0B` is read for `CHRG_STAT[4:3]`
+  and `VBUS_STAT[7:5]`; OTG output (`111`) is not reported as charger input.
   There are no gauge/charger configuration, control, seal, reset, calibration, or
   data-memory writes. Sampling is 90 seconds normally, 45 seconds while charging,
   and only in scheduled awake windows. A still-fresh validated SOC may be retained

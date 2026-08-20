@@ -174,10 +174,10 @@ class UiReliabilityPassTests(unittest.TestCase):
 
     def test_home_priorities_and_plain_language_states_are_visible(self):
         home = PAGES[PAGES.index("void home"):PAGES.index("void systems")]
-        for label in ("SUPPORTFORGE", "HOST HEALTH", "WEATHER", "MOVEMENT", "INCIDENT",
-                      "BATTERY", "WI-FI", "NO GPS FIX", "WEATHER SETUP"):
+        for label in ("SUPPORTFORGE / GUARDIAN", "SYSTEM HEALTH", "CPU LOAD", "RAM USED",
+                      "WI-FI / NETWORK", "BATTERY PERCENT", "CHARGE STATE"):
             self.assertIn(label, home)
-        for low_priority in ("NVME", "REFRESH INTERVAL", "HDOP"):
+        for low_priority in ("NVME", "REFRESH INTERVAL", "HDOP", "MOVEMENT", "INCIDENT"):
             self.assertNotIn(low_priority, home)
 
 

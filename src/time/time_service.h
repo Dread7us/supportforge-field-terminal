@@ -16,7 +16,7 @@ struct Snapshot {
   uint8_t day = 0;
   uint8_t month = 0;
   uint16_t year = 0;
-  uint8_t timezoneIndex = 0;
+  uint8_t timezoneIndex = 1;
   SyncState syncState = SyncState::Unsynchronized;
   time_t lastSuccessfulSync = 0;
   uint32_t version = 1;

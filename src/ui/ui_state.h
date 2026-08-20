@@ -9,7 +9,9 @@
 #include "weather/weather_wizard.h"
 #include "location/gps_manager.h"
 #include "power/low_power_manager.h"
+#include "power/front_light_manager.h"
 #include "network/wifi_manager.h"
+#include "ui_theme.h"
 
 namespace ui {
 
@@ -45,10 +47,23 @@ enum class Page : uint8_t {
   WifiNetworks,
   WifiEntry,
   WifiForgetConfirm,
-  Calculator
+  Calculator,
+  DisplaySettings
 };
 enum class Presence : uint8_t { Unknown, NotPresent, Observed };
 enum class RefreshMode : uint8_t { QuickNavigation, Balanced, BeautifulClean };
+
+struct PressFeedback {
+  bool active = false;
+  bool destinationRoute = false;
+  Page sourcePage = Page::Home;
+  Page targetPage = Page::Home;
+  Rect bounds{};
+  uint8_t radius = 10;
+  uint32_t acceptedAtMs = 0;
+  uint32_t expiresAtMs = 0;
+  char label[40]{};
+};
 
 const char* refreshModeName(RefreshMode mode);
 const char* refreshModeSummary(RefreshMode mode);
@@ -82,6 +97,7 @@ struct UiSnapshot {
   bool batterySampleAttempted = false;
   bool batterySampleValid = false;
   bool batteryChargeStatusVerified = false;
+  battery::ChargerConnection batteryChargerConnection = battery::ChargerConnection::Unknown;
   uint32_t batteryLastSampleMs = 0;
   uint32_t batteryLastAttemptMs = 0;
   device_time::SyncState timeSyncState = device_time::SyncState::Unsynchronized;
@@ -92,6 +108,8 @@ struct UiSnapshot {
   weather::WizardSnapshot weatherWizard{};
   location::Snapshot location{};
   power::Snapshot lowPower{};
+  power::FrontLightSnapshot frontLight{};
+  PressFeedback pressFeedback{};
   telemetry::Snapshot telemetry{};
   network::Snapshot wifi{};
   char wifiEntrySsid[network::kMaximumSsidBytes + 1]{};

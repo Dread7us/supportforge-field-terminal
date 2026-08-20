@@ -126,8 +126,8 @@ class HardwareResponsivenessPassTests(unittest.TestCase):
         self.assertIn("text(fb, unfilled, labelX", icon)
         self.assertIn("state == battery::State::Charging", icon)
         self.assertIn("void batteryDetail", PAGES)
-        self.assertIn('"BQ27220 LAST KNOWN"', PAGES)
-        self.assertIn('"SOC SOURCE",socSource', PAGES)
+        self.assertIn('return "LKG"', PAGES)
+        self.assertIn('"SOC QUALITY",batterySocFreshness(s)', PAGES)
 
     def test_unverified_physical_controls_are_not_exposed(self):
         # Retained current-Pro EPD source assigns IO48 to CKV, so it cannot be

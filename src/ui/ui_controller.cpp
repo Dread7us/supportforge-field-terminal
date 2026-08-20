@@ -16,6 +16,8 @@ constexpr size_t kFramebufferBytes = spec::kFramebufferStrideBytes * spec::kPhys
 constexpr size_t kGuardBytes = 64;
 constexpr uint8_t kGuardPattern = 0xA5;
 constexpr uint32_t kManualRefreshLimitMs = 45000;
+constexpr uint32_t kAutomaticCleanupCooldownMs = 300000;
+constexpr uint32_t kBootRecoveryGraceMs = 60000;
 static_assert(spec::kFramebufferBitsPerPixel == 4, "renderer requires packed 4-bpp EPDiy frames");
 static_assert(spec::kFramebufferStrideBytes * 2 == spec::kPhysicalWidth,
               "packed framebuffer stride must contain exactly two pixels per byte");
@@ -66,6 +68,21 @@ void DisplayCoordinator::noteTouchAction(uint32_t actionReadyMs, uint32_t handle
   if (actionReadyMs) lastTouchToActionMs_ = handledMs - actionReadyMs;
 }
 
+void DisplayCoordinator::acceptPress(Page sourcePage, Rect bounds, const char* label,
+                                     uint32_t nowMs, Page destinationPage) {
+  PressFeedback feedback{};
+  feedback.active = true;
+  feedback.sourcePage = sourcePage;
+  feedback.targetPage = destinationPage;
+  feedback.bounds = bounds;
+  feedback.acceptedAtMs = nowMs;
+  feedback.expiresAtMs = nowMs + 2500;
+  feedback.destinationRoute = destinationPage != sourcePage;
+  strlcpy(feedback.label, label ? label : "ACCEPTED", sizeof(feedback.label));
+  snapshot_.pressFeedback = feedback;
+  requestRender(destinationPage == sourcePage ? RenderPriority::Cosmetic : RenderPriority::Navigation);
+}
+
 void DisplayCoordinator::requestRender(RenderPriority priority) {
   ++renderRequestedCount_;
   if (pendingRender_ == RenderPriority::None) pendingSinceMs_ = millis();
@@ -76,9 +93,13 @@ void DisplayCoordinator::requestRender(RenderPriority priority) {
 
 void DisplayCoordinator::setSnapshot(const UiSnapshot& snapshot) {
   const Page retainedPage = snapshot_.page;
+  const PressFeedback retainedFeedback = snapshot_.pressFeedback;
   if (materiallyDifferent(snapshot_, snapshot)) requestRender(RenderPriority::Cosmetic);
   snapshot_ = snapshot;
   snapshot_.page = retainedPage;
+  // Service/state publication must not erase an accepted press that is still
+  // waiting for its single coalesced physical render.
+  if (retainedFeedback.active) snapshot_.pressFeedback = retainedFeedback;
 }
 
 bool DisplayCoordinator::requestPage(Page page, uint32_t nowMs) {
@@ -96,6 +117,24 @@ bool DisplayCoordinator::inputBlocked(uint32_t nowMs) const {
 bool DisplayCoordinator::manualRefreshAvailable(uint32_t nowMs) const {
   return !updating_ && (!lastManualRefreshMs_ ||
       nowMs - lastManualRefreshMs_ >= kManualRefreshLimitMs);
+}
+
+bool DisplayCoordinator::automaticCleanupAvailable(uint32_t nowMs) const {
+  return !cleanupCooldownActive_ || nowMs - lastCleanupMs_ >= kAutomaticCleanupCooldownMs;
+}
+
+bool DisplayCoordinator::rareMajorTransition(Page from, Page to) const {
+  auto qualificationLayout=[](Page page) {
+    return page == Page::DisplayCalibration || page == Page::TextQualification ||
+        page == Page::TouchSetup;
+  };
+  return from != to && qualificationLayout(from) != qualificationLayout(to);
+}
+
+void DisplayCoordinator::noteCleanupStarted(uint32_t nowMs) {
+  lastCleanupMs_ = nowMs;
+  cleanupCooldownActive_ = true;
+  fullClearUsed_ = true;
 }
 
 uint32_t DisplayCoordinator::manualRefreshRemainingSeconds(uint32_t nowMs) const {
@@ -123,9 +162,20 @@ bool DisplayCoordinator::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
   lastRenderWaitMs_ = pendingSinceMs_ ? renderStartedMs - pendingSinceMs_ : 0;
   pendingRender_ = RenderPriority::None;
   updating_ = true;
-  const bool cleanupThisRender = (bootRecovery && !fullClearUsed_) ||
-      refreshMode_ == RefreshMode::BeautifulClean ||
-      (refreshMode_ == RefreshMode::Balanced && renderingPriority == RenderPriority::Navigation);
+  if (bootRecovery && !fullClearUsed_ && !bootRecoveryArmed_) {
+    bootRecoveryArmed_ = true;
+    bootRecoveryEligibleAtMs_ = nowMs + kBootRecoveryGraceMs;
+  }
+  const bool recoveryCleanupDue = bootRecovery && !fullClearUsed_ && bootRecoveryArmed_ &&
+      static_cast<int32_t>(nowMs - bootRecoveryEligibleAtMs_) >= 0;
+  const bool majorTransition = hasPresentedPage_ &&
+      rareMajorTransition(lastPresentedPage_, snapshot_.page);
+  // QUICK never performs automatic cleanup. BALANCED and BEAUTIFUL share the
+  // bounded recovery/rare-layout gate; ordinary material, navigation, feedback,
+  // input, timer, telemetry and coalesced renders remain one GC16 presentation.
+  const bool automaticCleanupMode = refreshMode_ != RefreshMode::QuickNavigation;
+  const bool cleanupThisRender = automaticCleanupMode &&
+      (recoveryCleanupDue || majorTransition) && automaticCleanupAvailable(nowMs);
   bool displayPowered = false;
   if (cleanupThisRender) {
     // The high-level back buffer starts white and cannot know the panel's
@@ -134,9 +184,9 @@ bool DisplayCoordinator::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
     epd_poweron();
     displayPowered = true;
     const uint32_t cleanupStartedMs = millis();
+    noteCleanupStarted(cleanupStartedMs);
     epd_fullclear(&gDisplayState, epd_ambient_temperature());
     lastFullCleanupDurationMs_ = millis() - cleanupStartedMs;
-    fullClearUsed_ = true;
     Serial.println("DISPLAY cleanup=COMPLETE method=LILYGO_EPD_FULLCLEAR");
   }
   // Compose off-screen from a complete known-white 960x540 packed 4-bpp frame.
@@ -176,6 +226,11 @@ bool DisplayCoordinator::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
     navigationRequestedMs_ = 0;
   }
   if (result == EPD_DRAW_SUCCESS) {
+    // Consumption never schedules a refresh. The next material composition starts
+    // from white and therefore clears the old accepted-control bounds.
+    snapshot_.pressFeedback.active = false;
+    lastPresentedPage_ = snapshot_.page;
+    hasPresentedPage_ = true;
     failedUpdateRetryUsed_ = false;
   } else if (!failedUpdateRetryUsed_) {
     failedUpdateRetryUsed_ = true;
@@ -206,6 +261,7 @@ bool DisplayCoordinator::renderWhiteTest(uint32_t nowMs) {
   Serial.println("DISPLAY white_test=START guard=ONCE_PER_BOOT cleanup=START");
   epd_poweron();
   const uint32_t cleanupStartedMs=millis();
+  noteCleanupStarted(cleanupStartedMs);
   epd_fullclear(&gDisplayState,epd_ambient_temperature());
   lastFullCleanupDurationMs_=millis()-cleanupStartedMs;
   memset(compositionBuffer_,0xFF,kFramebufferBytes);
@@ -245,9 +301,9 @@ bool DisplayCoordinator::manualFullRefresh(uint32_t nowMs, Page returnPage) {
   // rejected before this point remains eligible instead of consuming the limit.
   lastManualRefreshMs_=millis();
   const uint32_t cleanupStartedMs=millis();
+  noteCleanupStarted(cleanupStartedMs);
   epd_fullclear(&gDisplayState,epd_ambient_temperature());
   lastFullCleanupDurationMs_=millis()-cleanupStartedMs;
-  fullClearUsed_=true;
   memset(compositionBuffer_,0xFF,kFramebufferBytes);
   UiSnapshot returnSnapshot=snapshot_;
   returnSnapshot.page=returnPage;
@@ -268,7 +324,7 @@ bool DisplayCoordinator::manualFullRefresh(uint32_t nowMs, Page returnPage) {
   lastGc16DurationMs_=millis()-gc16StartedMs;
   epd_poweroff();updating_=false;lastRefreshMs_=millis();++refreshCount_;++renderRenderedCount_;
   lastRenderDurationMs_=lastFullCleanupDurationMs_+lastGc16DurationMs_;
-  if(result==EPD_DRAW_SUCCESS){snapshot_=returnSnapshot;failedUpdateRetryUsed_=false;}
+  if(result==EPD_DRAW_SUCCESS){snapshot_=returnSnapshot;snapshot_.pressFeedback.active=false;lastPresentedPage_=returnPage;hasPresentedPage_=true;failedUpdateRetryUsed_=false;}
   else{snapshot_.page=previousPage;requestRender(RenderPriority::Navigation);}
   Serial.printf("DISPLAY cleanup=COMPLETE method=FULLCLEAR render=GC16 page=%s result=%d state=PRESERVED gc16_ms=%lu cleanup_ms=%lu\n",
                 pageName(returnPage),static_cast<int>(result),static_cast<unsigned long>(lastGc16DurationMs_),static_cast<unsigned long>(lastFullCleanupDurationMs_));

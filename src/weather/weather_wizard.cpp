@@ -101,7 +101,11 @@ WizardResult WeatherWizard::tap(ui::Rect point, const location::Snapshot& gps, W
     if (y>=520&&y<590) { state_.pendingSource=LocationSource::City;resetInput(InputKind::City);return WizardResult::Changed; }
     if (y>=600&&y<670) { state_.pendingSource=LocationSource::Postal;resetInput(InputKind::Postal);return WizardResult::Changed; }
     if (y>=680&&y<750) { state_.pendingSource=LocationSource::Manual;state_.latitude[0]=state_.longitude[0]=0;resetInput(InputKind::Latitude);return WizardResult::Changed; }
-    if (kSubmit.contains(x,y)) { manager.requestRefresh(millis());setError(state_,location::currentFixUsable(gps)?"GPS FIXED - WEATHER REQUESTED":"SEARCHING FOR GPS");return WizardResult::Changed; }
+    if (kSubmit.contains(x,y)) {
+      if(!manager.requestRefresh(millis()))return WizardResult::None;
+      setError(state_,location::currentFixUsable(gps)?"GPS FIXED - WEATHER REQUESTED":"SEARCHING FOR GPS");
+      return WizardResult::Changed;
+    }
     if(kCancel.contains(x,y)){cancel();return WizardResult::Cancelled;}
   }
 

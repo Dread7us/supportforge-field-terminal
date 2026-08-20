@@ -26,12 +26,13 @@ MAIN = text("src/main.cpp")
 class TimeBatteryWeatherTests(unittest.TestCase):
     def test_time_preferences_timezone_default_and_ntp_rtc_holdover(self):
         self.assertIn('preferences_.begin("sf_time"', TIME)
-        self.assertIn('getUChar("tz", 0)', TIME)
+        self.assertIn('getUChar("tz", 1)', TIME)
         self.assertIn('getBool("hour24", true)', TIME)
         self.assertIn('putUChar("tz"', TIME)
         self.assertIn('putBool("hour24"', TIME)
         self.assertIn('"UTC0"', TIME)
-        self.assertIn('configTime(0, 0', TIME)
+        self.assertIn('configTzTime(timezoneRule(snapshot_.timezoneIndex)', TIME)
+        self.assertNotIn('configTime(0, 0', TIME)
         self.assertIn('SyncState::RtcHoldover', TIME)
         self.assertIn('writeRtcUtc', TIME)
         self.assertIn('PST8PDT,M3.2.0,M11.1.0', TIME)
@@ -100,7 +101,21 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         self.assertIn('freshness=%s', BATTERY)
         self.assertNotIn('percent=%s', BATTERY)
         self.assertIn('percent + " STALE"', PAGES)
-        self.assertIn('"BQ27220 LAST KNOWN"', PAGES)
+        self.assertIn('return "LKG"', PAGES)
+
+    def test_battery_details_separate_soc_quality_connection_and_charge_state(self):
+        for label in ('"PERCENTAGE"', '"SOC QUALITY"', '"GAUGE UPDATE"',
+                      '"CHARGER"', '"CHARGE STATE"'):
+            self.assertIn(label, PAGES)
+        for quality in ('"LIVE"', '"LKG"', '"STALE"'):
+            self.assertIn(quality, PAGES)
+        for state in ('"CONNECTED"', '"NOT CONNECTED"', '"VERIFICATION NEEDED"'):
+            self.assertIn(state, BATTERY)
+        self.assertIn('kVbusStatusMask = 0xE0', BATTERY)
+        self.assertIn('classifyChargerConnection', BATTERY + BATTERY_H)
+        self.assertIn('batteryChargerConnection', MAIN + PAGES)
+        self.assertIn('if (!s.batteryChargeStatusVerified || s.batteryState == battery::State::Verifying)', PAGES)
+        self.assertIn('if (s.batteryState == battery::State::Full) return "COMPLETE"', PAGES)
 
     def test_weather_states_cache_interval_and_guardian_isolation(self):
         for label in ('WX SETUP', 'WX OFFLINE', 'WX ONLINE'):

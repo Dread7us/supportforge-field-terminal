@@ -5,7 +5,7 @@
 
 namespace ui {
 namespace spec {
-constexpr uint32_t kContractVersion = 11;
+constexpr uint32_t kContractVersion = 12;
 constexpr int kCanvasWidth = 540;
 constexpr int kCanvasHeight = 960;
 constexpr int kPhysicalWidth = 960;
@@ -26,6 +26,9 @@ constexpr int kHeaderDateBounds[4] = {272, 6, 84, 52};
 constexpr int kHeaderWifiBounds[4] = {360, 6, 32, 52};
 constexpr int kHeaderBatteryBounds[4] = {396, 6, 136, 52};
 constexpr int kPrimaryContent[4] = {24, 64, 492, 784};
+constexpr int kHomeHeroBounds[4] = {24, 80, 492, 330};
+constexpr int kHomeClockBounds[4] = {40, 94, 460, 126};
+constexpr int kHomeWeatherBounds[4] = {40, 256, 460, 136};
 constexpr int kDeviceDiagnosticsAction[4] = {24, 550, 492, 88};
 constexpr int kDeviceTouchSetupAction[4] = {24, 654, 492, 72};
 constexpr int kDeviceSettingsAction[4] = {24, 742, 492, 72};
@@ -45,6 +48,7 @@ constexpr int kFontCardHeadingPixels = 22;
 constexpr int kFontPageHeadingPixels = 28;
 constexpr int kFontBrandPixels = 32;
 constexpr int kFontMetricPixels = 30;
+constexpr int kFontHomeClockPixels = 92;
 constexpr int kFontNavigationPixels = 15;
 constexpr int kTouchCornerX = 100;
 constexpr int kTouchCornerY = 120;
@@ -61,8 +65,8 @@ constexpr int kTouchCleanReleaseMs = 120;
 constexpr int kTouchTransitionCooldownMs = 120;
 constexpr int kTouchPostRefreshQuietMs = 150;
 
-constexpr int kHomeCardCount = 6;
-constexpr int kHomeCards[kHomeCardCount][4] = {{24, 104, 492, 154}, {24, 282, 238, 112}, {278, 282, 238, 112}, {24, 410, 238, 112}, {278, 410, 238, 112}, {24, 538, 492, 276}};
+constexpr int kHomeCardCount = 5;
+constexpr int kHomeCards[kHomeCardCount][4] = {{24, 80, 492, 330}, {24, 426, 238, 178}, {278, 426, 238, 178}, {24, 620, 238, 178}, {278, 620, 238, 178}};
 constexpr int kSystemsCardCount = 2;
 constexpr int kSystemsCards[kSystemsCardCount][4] = {{24, 144, 492, 326}, {24, 494, 492, 150}};
 constexpr int kRadioCardCount = 3;

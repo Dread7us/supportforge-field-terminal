@@ -13,6 +13,7 @@ const fonts::Font& fontFor(FontRole role) {
     case FontRole::PageHeading: return fonts::kPageHeading;
     case FontRole::Brand: return fonts::kBrand;
     case FontRole::Metric: return fonts::kMetric;
+    case FontRole::HomeClock: return fonts::kHomeClock;
     case FontRole::VehicleSpeed: return fonts::kVehicleSpeed;
     case FontRole::AltimeterMetric: return fonts::kAltimeterMetric;
     case FontRole::Navigation: return fonts::kNavigation;

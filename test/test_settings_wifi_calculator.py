@@ -128,7 +128,7 @@ class SettingsWifiCalculatorTests(unittest.TestCase):
         settings = PAGES[PAGES.index("void settings("):PAGES.index("void dateTimeSettings(")]
         for label in canonical:
             self.assertIn(f'"{label}"', settings)
-        routes = ((0, "WifiSettings"), (1, "DateTimeSettings"), (2, "DisplayRefreshMode"),
+        routes = ((0, "WifiSettings"), (1, "DateTimeSettings"), (2, "DisplaySettings"),
                   (3, "UnitsSettings"), (5, "LocationPrivacySettings"))
         for index, page in routes:
             self.assertRegex(MAIN, rf"kSettingsCategoryActions\[{index}\].*Page::{page}")

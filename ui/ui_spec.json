@@ -1,5 +1,5 @@
 {
-  "contract_version": 11,
+  "contract_version": 12,
   "canvas": {"width": 540, "height": 960, "physical_width": 960, "physical_height": 540, "origin": "top-left", "rotation": "inverted-portrait"},
   "framebuffer": {"bits_per_pixel": 4, "stride_bytes": 480, "white_nibble": 15, "black_nibble": 0},
   "geometry": {
@@ -17,6 +17,9 @@
     "header_wifi_bounds": [360,6,32,52],
     "header_battery_bounds": [396,6,136,52],
     "primary_content": [24, 64, 492, 784],
+    "home_hero_bounds": [24,80,492,330],
+    "home_clock_bounds": [40,94,460,126],
+    "home_weather_bounds": [40,256,460,136],
     "device_diagnostics_action": [24, 550, 492, 88],
     "device_touch_setup_action": [24,654,492,72],
     "device_settings_action": [24,742,492,72],
@@ -30,7 +33,7 @@
     "source": "assets/fonts/Inter-SemiBold.ttf",
     "license": "OFL-1.1",
     "supported": "ASCII 32-126",
-    "roles": {"caption": 15, "body": 18, "card_heading": 22, "page_heading": 28, "brand": 32, "metric": 30, "navigation": 15}
+    "roles": {"caption": 15, "body": 18, "card_heading": 22, "page_heading": 28, "brand": 32, "metric": 30, "home_clock": 92, "navigation": 15}
   },
   "navigation": {
     "labels": ["HOME", "SYSTEMS", "RADIO", "LOCATION", "DEVICE"],
@@ -39,8 +42,8 @@
     "touch": {"corner_x": 100, "corner_y": 120, "target_inset": 84, "target_radius": 44, "mapping_tolerance_x": 70, "mapping_tolerance_y": 100, "tap_slop": 24, "swipe_min": 88, "cross_axis_max": 64, "min_press_ms": 30, "max_press_ms": 1200, "clean_release_ms": 120, "transition_cooldown_ms": 120, "post_refresh_quiet_ms": 150},
   "pages": {
     "home": {
-      "cards": [[24,104,492,154],[24,282,238,112],[278,282,238,112],[24,410,238,112],[278,410,238,112],[24,538,492,276]],
-      "text": [[44,146,452,7,1,"TERMINAL STATUS"],[44,172,452,21,3,"SETUP REQUIRED"],[44,206,452,7,1,"CONNECT SUPPORTFORGE TO BEGIN MONITORING"],[40,327,206,7,1,"SYSTEMS"],[40,361,206,14,2,"NOT CONNECTED"],[294,327,206,7,1,"INCIDENTS"],[294,361,206,14,2,"--"]]
+      "cards": [[24,80,492,330],[24,426,238,178],[278,426,238,178],[24,620,238,178],[278,620,238,178]],
+      "text": [[40,94,460,126,8,"12:59 PM"],[40,220,460,28,2,"AUGUST 20, 2026"],[148,270,352,28,2,"PORTLAND, OREGON"],[148,306,352,32,3,"CLEAR 72 F"],[148,344,352,24,1,"FEELS LIKE 71 F"]]
     },
     "systems": {"cards": [[24,144,492,326],[24,494,492,150]], "text": [[40,252,460,14,2,"NO SYSTEMS YET"],[44,512,452,7,1,"CONFIGURATION"],[44,538,452,21,3,"SETUP REQUIRED"]]},
     "radio": {"cards": [[24,128,492,156],[24,308,492,246],[24,580,492,210]], "text": [[44,146,452,7,1,"SX1262 RADIO"],[44,172,452,21,3,"RECEIVE ONLY"],[44,206,452,7,1,"915 MHZ REGION - TRANSMISSION DISABLED"]]},

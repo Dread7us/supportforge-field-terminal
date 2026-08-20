@@ -35,6 +35,8 @@ class DisplayCoordinator {
   RefreshMode refreshMode() const { return refreshMode_; }
   bool setRefreshMode(RefreshMode mode);
   void noteTouchAction(uint32_t actionReadyMs, uint32_t handledMs);
+  void acceptPress(Page sourcePage, Rect bounds, const char* label,
+                   uint32_t nowMs, Page destinationPage);
   uint32_t lastGc16DurationMs() const { return lastGc16DurationMs_; }
   uint32_t lastFullCleanupDurationMs() const { return lastFullCleanupDurationMs_; }
   uint32_t lastPageTransitionDurationMs() const { return lastPageTransitionDurationMs_; }
@@ -43,6 +45,9 @@ class DisplayCoordinator {
   void printPerformance() const;
 
  private:
+  bool automaticCleanupAvailable(uint32_t nowMs) const;
+  bool rareMajorTransition(Page from, Page to) const;
+  void noteCleanupStarted(uint32_t nowMs);
   UiSnapshot snapshot_{};
   bool initialized_ = false;
   RenderPriority pendingRender_ = RenderPriority::Cosmetic;
@@ -52,6 +57,12 @@ class DisplayCoordinator {
   uint32_t lastRefreshMs_ = 0;
   uint32_t refreshCount_ = 0;
   uint32_t lastManualRefreshMs_ = 0;
+  uint32_t lastCleanupMs_ = 0;
+  uint32_t bootRecoveryEligibleAtMs_ = 0;
+  bool cleanupCooldownActive_ = false;
+  bool bootRecoveryArmed_ = false;
+  bool hasPresentedPage_ = false;
+  Page lastPresentedPage_ = Page::Home;
   bool failedUpdateRetryUsed_ = false;
   uint32_t renderRequestedCount_ = 0, renderRenderedCount_ = 0;
   uint32_t renderCoalescedCount_ = 0, lastRenderDurationMs_ = 0;

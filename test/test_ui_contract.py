@@ -106,13 +106,13 @@ class UiContractTests(unittest.TestCase):
   self.assertIn('else epd_draw_rect',icon)
   self.assertNotRegex(icon,r'epd_draw_circle|epd_fill_circle|epd_draw_line|cos\(|sin\(')
   home=SPEC['pages']['home']['cards']
-  self.assertEqual(home[0][1],104)
-  self.assertEqual(home[-1],[24,538,492,276])
+  self.assertEqual(home[0],[24,80,492,330])
+  self.assertEqual(home[-1],[278,620,238,178])
   self.assertLess(home[-1][1]+home[-1][3],SPEC['geometry']['content_bottom'])
   home_renderer=PAGES[PAGES.index('void home('):PAGES.index('void systems(')]
   clear='epd_fill_rect({kMargin,kAppBarHeight,kCanvasWidth-2*kMargin,'
   self.assertIn(clear,home_renderer)
-  self.assertLess(home_renderer.index(clear),home_renderer.index('card(fb,contractRect(spec::kHomeCards[0])'))
+  self.assertLess(home_renderer.index(clear),home_renderer.index('const Rect hero=contractRect(spec::kHomeHeroBounds)'))
  def test_display_completion_establishes_idle_release_without_sacrificing_next_tap(self):
   finished=TOUCH[TOUCH.index('void TouchController::notifyDisplayUpdateFinished'):
                  TOUCH.index('bool TouchController::readRaw')]
@@ -154,7 +154,8 @@ class UiContractTests(unittest.TestCase):
   self.assertIn('roundedRect(fb,kVehicleQualityBounds',motion)
   self.assertIn('detailBack(fb)',motion)
   self.assertIn('displayCoordinator.page()==ui::Page::VehicleMotion',MAIN)
-  self.assertIn('kHomeMotionAction.contains',MAIN)
+  self.assertIn('name == "vehicle motion"',MAIN)
+  self.assertIn('kVehicleLocationAction.contains',MAIN)
  def test_altimeter_metric_geometry_fit_clean_redraw_and_static_design(self):
   metric=METRICS['roles']['AltimeterMetric']; self.assertEqual((metric['weight'],metric['size']),('Bold',92))
   advances=metric['advances']; width=lambda s:sum(advances[ord(c)-32] for c in s)
@@ -230,6 +231,8 @@ class UiContractTests(unittest.TestCase):
   setup=MAIN[MAIN.index('void setup()'):MAIN.index('void loop()')]
   self.assertGreaterEqual(setup.count('bootCleanupPending = true'),2)
   self.assertIn('policy=EVERY_BOOT',setup)
+  self.assertIn('usable destination first',setup)
+  self.assertIn('kBootRecoveryGraceMs',CONTROLLER)
   self.assertNotIn('bootCleanupPending = storedRevision != kDisplayCleanupRevision',setup)
   self.assertNotIn('revision-gated cleanup',MAIN)
   self.assertIn('manualFullRefresh',CONTROLLER); self.assertIn('renderWhiteTest',CONTROLLER)

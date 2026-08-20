@@ -153,10 +153,14 @@ class LocationWeatherSetupTests(unittest.TestCase):
         self.assertLess(TIME.count('putUChar("tz"'), 2)
 
     def test_navigation_routes_are_direct_and_back_paths_are_explicit(self):
-        self.assertIn("weatherManager.snapshot().configured", MAIN)
+        home_weather = MAIN[MAIN.index("kHomeWeatherDetailAction.contains"):
+                            MAIN.index("kHomeBatteryAction.contains")]
+        self.assertIn("destination=ui::Page::WeatherDetail", home_weather)
+        self.assertNotIn("weatherManager.snapshot().configured", home_weather)
+        self.assertIn("kWeatherDetailSetupAction.contains", MAIN)
         self.assertIn("destination=ui::Page::WeatherSetup", MAIN)
-        self.assertIn("destination=ui::Page::WeatherDetail", MAIN)
-        self.assertIn("destination=ui::Page::VehicleMotion", MAIN)
+        self.assertIn('name == "vehicle motion"', MAIN)
+        self.assertIn("page = ui::Page::VehicleMotion", MAIN)
         self.assertIn("kVehicleLocationAction.contains", MAIN)
         self.assertIn("destination=ui::Page::Location", MAIN)
         self.assertIn("detailReturnPage=ui::Page::VehicleMotion;destination=ui::Page::Altimeter", MAIN)

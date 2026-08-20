@@ -56,7 +56,9 @@ uint8_t timezoneCount() { return kTimezoneCount; }
 bool TimeService::begin(bool rtcObserved) {
   rtcObserved_ = rtcObserved;
   if (preferences_.begin("sf_time", false)) {
-    snapshot_.timezoneIndex = min<uint8_t>(preferences_.getUChar("tz", 0), kTimezoneCount - 1);
+    // Fresh devices begin in Pacific time. The POSIX rule supplies automatic
+    // PST/PDT transitions; the system clock itself remains canonical UTC epoch.
+    snapshot_.timezoneIndex = min<uint8_t>(preferences_.getUChar("tz", 1), kTimezoneCount - 1);
     snapshot_.use24Hour = preferences_.getBool("hour24", true);
     snapshot_.lastSuccessfulSync = static_cast<time_t>(preferences_.getULong64("last_sync", 0));
   }
@@ -78,14 +80,15 @@ void TimeService::applyTimezone() {
 
 void TimeService::poll(uint32_t nowMs, bool wifiConnected) {
   if (preferencesDirty_ && reached(nowMs, preferencesDueMs_)) {
-    preferences_.putUChar("tz", snapshot_.timezoneIndex);
     preferences_.putBool("hour24", snapshot_.use24Hour);
     preferencesDirty_ = false;
   }
   if (!reached(nowMs, nextCheckMs_)) return;
   nextCheckMs_ = nowMs + kCheckIntervalMs;
   if (wifiConnected && (!ntpStarted_ || forceSync_)) {
-    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    // The fixed-offset SNTP API silently resets the process timezone to UTC on ESP32.
+    // Keep SNTP and localtime_r on the same persisted, DST-aware timezone rule.
+    configTzTime(timezoneRule(snapshot_.timezoneIndex), "pool.ntp.org", "time.nist.gov");
     ntpStarted_ = true;
     forceSync_ = false;
     if (snapshot_.syncState != SyncState::RtcHoldover &&
@@ -114,9 +117,10 @@ void TimeService::cycleTimezone() {
 bool TimeService::setTimezone(uint8_t index) {
   if (index >= kTimezoneCount || index == snapshot_.timezoneIndex) return false;
   snapshot_.timezoneIndex = index;
-  preferencesDirty_ = true;
-  preferencesDueMs_ = millis() + kPreferenceWriteDelayMs;
   applyTimezone();
+  // A timezone selection is operational state, not disposable UI state. Commit
+  // it before publishing so an immediate reboot retains the selected zone.
+  preferences_.putUChar("tz", snapshot_.timezoneIndex);
   publishSettingsChange();
   return true;
 }

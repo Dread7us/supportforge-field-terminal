@@ -9,7 +9,7 @@ const char* refreshModeName(RefreshMode mode) {
   switch (mode) {
     case RefreshMode::QuickNavigation: return "QUICK NAVIGATION";
     case RefreshMode::Balanced: return "BALANCED";
-    case RefreshMode::BeautifulClean: return "BEAUTIFUL / CLEAN";
+    case RefreshMode::BeautifulClean: return "BEAUTIFUL";
   }
   return "BALANCED";
 }
@@ -17,10 +17,10 @@ const char* refreshModeName(RefreshMode mode) {
 const char* refreshModeSummary(RefreshMode mode) {
   switch (mode) {
     case RefreshMode::QuickNavigation: return "FAST GC16; MANUAL CLEAN AS NEEDED";
-    case RefreshMode::Balanced: return "CLEAN BETWEEN PAGES; FAST LIVE UPDATES";
-    case RefreshMode::BeautifulClean: return "CLEAN BEFORE EVERY VISIBLE UPDATE";
+    case RefreshMode::Balanced: return "GC16; BOUNDED RECOVERY CLEANUP";
+    case RefreshMode::BeautifulClean: return "GC16; RARE COOLDOWN-GUARDED CLEANUP";
   }
-  return "CLEAN BETWEEN PAGES; FAST LIVE UPDATES";
+  return "GC16; BOUNDED RECOVERY CLEANUP";
 }
 
 const char* pageName(Page page) {
@@ -57,6 +57,7 @@ const char* pageName(Page page) {
     case Page::WifiEntry: return "WI-FI ENTRY";
     case Page::WifiForgetConfirm: return "FORGET WI-FI";
     case Page::Calculator: return "CALCULATOR";
+    case Page::DisplaySettings: return "DISPLAY";
   }
   return "HOME";
 }
@@ -97,6 +98,9 @@ bool materiallyDifferent(const UiSnapshot& a, const UiSnapshot& b) {
       a.batteryPercentAvailable != b.batteryPercentAvailable ||
       (a.batteryPercentAvailable && a.batteryPercent != b.batteryPercent) ||
        a.batteryState != b.batteryState ||
+       a.batterySampleValid != b.batterySampleValid ||
+       a.batteryChargeStatusVerified != b.batteryChargeStatusVerified ||
+       a.batteryChargerConnection != b.batteryChargerConnection ||
       a.weather.state != b.weather.state ||
        a.weather.source != b.weather.source ||
        a.weather.configured != b.weather.configured ||
@@ -126,6 +130,9 @@ bool materiallyDifferent(const UiSnapshot& a, const UiSnapshot& b) {
         a.weather.weatherCode != b.weather.weatherCode)) ||
        a.location.version != b.location.version ||
        a.lowPower.version != b.lowPower.version ||
+       a.frontLight.version != b.frontLight.version ||
+       a.pressFeedback.active != b.pressFeedback.active ||
+       a.pressFeedback.acceptedAtMs != b.pressFeedback.acceptedAtMs ||
        a.wifi.version != b.wifi.version ||
        strcmp(a.wifiEntrySsid, b.wifiEntrySsid) ||
        a.wifiPasswordLength != b.wifiPasswordLength ||

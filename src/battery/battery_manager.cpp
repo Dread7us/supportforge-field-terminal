@@ -10,6 +10,7 @@ constexpr uint8_t kChargerAddress = 0x6B;
 constexpr uint8_t kStateOfChargeRegister = 0x2C;
 constexpr uint8_t kChargerStatusRegister = 0x0B;
 constexpr uint8_t kChargeStatusMask = 0x18;
+constexpr uint8_t kVbusStatusMask = 0xE0;
 constexpr uint32_t kNormalSampleIntervalMs = 90UL * 1000UL;
 constexpr uint32_t kChargingSampleIntervalMs = 45UL * 1000UL;
 constexpr uint32_t kRecoverySampleIntervalMs = 5UL * 1000UL;
@@ -72,6 +73,23 @@ State classifyChargeStatus(uint8_t register0b) {
   return State::Error;
 }
 
+ChargerConnection classifyChargerConnection(uint8_t register0b) {
+  // BQ25896 REG0B VBUS_STAT[7:5]: 000 is no input, 001..110 are
+  // detected input sources, and 111 is OTG output rather than a charger input.
+  const uint8_t vbusStatus = (register0b & kVbusStatusMask) >> 5;
+  return vbusStatus >= 1 && vbusStatus <= 6
+      ? ChargerConnection::Connected : ChargerConnection::NotConnected;
+}
+
+const char* chargerConnectionName(ChargerConnection value) {
+  switch (value) {
+    case ChargerConnection::Connected: return "CONNECTED";
+    case ChargerConnection::NotConnected: return "NOT CONNECTED";
+    case ChargerConnection::Unknown: return "VERIFICATION NEEDED";
+  }
+  return "VERIFICATION NEEDED";
+}
+
 State reconcileStateOfCharge(State chargerState, bool socFresh, uint8_t percent) {
   if (chargerState != State::Full) return chargerState;
   // Charge termination is necessary but not sufficient for FULL. Only a fresh,
@@ -127,6 +145,8 @@ void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObse
   // status read must never hide a valid gauge percentage or imply charging.
   snapshot_.sampleValid = socValid;
   snapshot_.chargeStatusVerified = chargerValid;
+  snapshot_.chargerConnection = chargerValid
+      ? classifyChargerConnection(chargerStatus) : ChargerConnection::Unknown;
   if (socValid) {
     consecutiveSocFailures_ = 0;
     snapshot_.percentAvailable = true;
@@ -171,7 +191,8 @@ void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObse
       before.percentAvailable != snapshot_.percentAvailable ||
       (snapshot_.percentAvailable && before.percent != snapshot_.percent) ||
       before.sampleValid != snapshot_.sampleValid ||
-      before.chargeStatusVerified != snapshot_.chargeStatusVerified) ++snapshot_.version;
+      before.chargeStatusVerified != snapshot_.chargeStatusVerified ||
+      before.chargerConnection != snapshot_.chargerConnection) ++snapshot_.version;
   // Diagnostics expose only bounded state names and validity flags. Raw charger
   // words, SOC values, device secrets, and user data are never emitted.
   Serial.printf("BATTERY read=%s soc_valid=%s charge_status_verified=%s charger_state=%s state=%s freshness=%s\n",

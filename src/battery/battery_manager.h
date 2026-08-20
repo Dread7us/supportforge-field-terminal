@@ -8,6 +8,8 @@ namespace battery {
 // BQ25896 read-only contracts. No gauge configuration/control path exists here.
 enum class State : uint8_t { Available, Charging, Full, Verifying, Stale, Unknown, NotPresent, Error };
 
+enum class ChargerConnection : uint8_t { Unknown, NotConnected, Connected };
+
 struct Snapshot {
   State state = State::NotPresent;
   bool percentAvailable = false;
@@ -15,6 +17,7 @@ struct Snapshot {
   bool sampleAttempted = false;
   bool sampleValid = false;
   bool chargeStatusVerified = false;
+  ChargerConnection chargerConnection = ChargerConnection::Unknown;
   bool hasValidSample = false;
   uint32_t lastSampleMs = 0;
   uint32_t lastAttemptMs = 0;
@@ -40,7 +43,9 @@ const char* stateName(State value);
 bool validPercent(int value);
 uint16_t decodeLittleEndianWord(uint8_t low, uint8_t high);
 State classifyChargeStatus(uint8_t register0b);
+ChargerConnection classifyChargerConnection(uint8_t register0b);
 State reconcileStateOfCharge(State chargerState, bool socFresh, uint8_t percent);
+const char* chargerConnectionName(ChargerConnection value);
 constexpr uint8_t nearFullThresholdPercent() { return 95; }
 constexpr uint32_t maximumFreshAgeMs() { return 270UL * 1000UL; }
 

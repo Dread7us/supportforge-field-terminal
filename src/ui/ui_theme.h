@@ -66,7 +66,9 @@ constexpr Rect kSettingsSyncActionCompact{195, 642, 150, 82};
 constexpr Rect kSettingsTouchActionCompact = kSettingsTouchAction;
 constexpr Rect kTouchRecalibrateCancelAction{24, 742, 238, 72};
 constexpr Rect kTouchRecalibrateConfirmAction{278, 742, 238, 72};
-constexpr Rect kHomeWeatherAction = contractRect(spec::kHomeCards[5]);
+constexpr Rect kHomeHeroAction = contractRect(spec::kHomeHeroBounds);
+constexpr Rect kHomeClockAction = contractRect(spec::kHomeClockBounds);
+constexpr Rect kHomeWeatherAction = contractRect(spec::kHomeWeatherBounds);
 constexpr Rect kLocationGpsPowerAction{24, 582, 238, 72};
 constexpr Rect kLocationSpeedUnitAction{278, 582, 238, 72};
 constexpr Rect kLocationPrivacyAction{24, 670, 238, 72};
@@ -77,22 +79,21 @@ constexpr Rect kSettingsWeatherAction{24, 758, 492, 72};
 constexpr Rect kDiagnosticsDisplayCalibrationAction{24, 632, 492, 126};
 constexpr Rect kDiagnosticsTextQualificationAction{24, 632, 492, 126};
 constexpr Rect kDetailBackAction{24, 776, 492, 72};
-constexpr Rect kHomeHostAction = contractRect(spec::kHomeCards[0]);
-constexpr Rect kHomeMetricsAction = contractRect(spec::kHomeCards[1]);
-constexpr Rect kHomeWeatherDetailAction = contractRect(spec::kHomeCards[2]);
-constexpr Rect kHomeMotionAction = contractRect(spec::kHomeCards[3]);
-constexpr Rect kHomeStorageAction{24,686,492,56};
-constexpr Rect kHomeNetworkAction{24,630,492,56};
-constexpr Rect kHomeBatteryAction{24,574,492,56};
+constexpr Rect kHomeHostAction = contractRect(spec::kHomeCards[1]);
+constexpr Rect kHomeMetricsAction = contractRect(spec::kHomeCards[2]);
+constexpr Rect kHomeNetworkAction = contractRect(spec::kHomeCards[3]);
+constexpr Rect kHomeBatteryAction = contractRect(spec::kHomeCards[4]);
+constexpr Rect kHomeWeatherDetailAction = kHomeWeatherAction;
 constexpr Rect kHeaderBatteryAction = contractRect(spec::kHeaderBatteryBounds);
 constexpr Rect kHeaderWifiAction = contractRect(spec::kHeaderWifiBounds);
 constexpr Rect kHeaderClockAction = contractRect(spec::kHeaderClockBounds);
-static_assert(kHomeBatteryAction.y + kHomeBatteryAction.h <= kHomeNetworkAction.y &&
-                  kHomeNetworkAction.y + kHomeNetworkAction.h <= kHomeStorageAction.y &&
-                  kHomeBatteryAction.h >= kMinimumTouchTarget &&
-                  kHomeNetworkAction.h >= kMinimumTouchTarget &&
-                  kHomeStorageAction.h >= kMinimumTouchTarget,
-              "HOME summary actions must remain fixed, disjoint qualified targets");
+static_assert(kHomeClockAction.y + kHomeClockAction.h <= kHomeWeatherAction.y &&
+                  kHomeWeatherAction.y + kHomeWeatherAction.h <= kHomeHostAction.y &&
+                  kHomeHostAction.x + kHomeHostAction.w <= kHomeMetricsAction.x &&
+                  kHomeNetworkAction.x + kHomeNetworkAction.w <= kHomeBatteryAction.x &&
+                  kHomeClockAction.h >= kMinimumTouchTarget &&
+                  kHomeWeatherAction.h >= kMinimumTouchTarget,
+              "HOME dashboard actions must remain fixed, disjoint qualified targets");
 constexpr Rect kDeviceBatteryAction = contractRect(spec::kDeviceCards[0]);
 constexpr Rect kWeatherDetailSetupAction{24,690,492,64};
 constexpr Rect kTimezoneBackAction{24,776,492,72};
@@ -102,6 +103,11 @@ constexpr Rect kSettingsRefreshModeAction{24, 540, 492, 86};
 constexpr Rect kRefreshModeActions[] = {
     {24, 180, 492, 144}, {24, 344, 492, 144}, {24, 508, 492, 164}};
 constexpr Rect kRefreshModeBackAction{24, 776, 492, 72};
+constexpr Rect kDisplayFrontLightActions[] = {
+    {24, 176, 238, 92}, {278, 176, 238, 92},
+    {24, 282, 238, 92}, {278, 282, 238, 92}};
+constexpr Rect kDisplayRefreshSettingsAction{24, 420, 492, 104};
+constexpr Rect kDisplaySettingsBackAction{24, 776, 492, 72};
 // Settings deliberately uses nearly all available content height. The former
 // 68 px rows and wide dead bands made physical taps unnecessarily demanding.
 constexpr Rect kSettingsCategoryActions[] = {

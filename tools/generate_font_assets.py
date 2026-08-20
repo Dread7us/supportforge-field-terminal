@@ -6,6 +6,7 @@ ROOT=Path(__file__).parents[1]; HEADER=ROOT/'src/ui/ui_fonts_generated.h'; METRI
 ROLES={
  'Caption':('Inter-SemiBold.ttf',15,'reinforced_aa'),'Body':('Inter-SemiBold.ttf',18,'reinforced_aa'),'CardHeading':('Inter-SemiBold.ttf',22,'reinforced_aa'),
  'PageHeading':('Inter-Bold.ttf',28,'reinforced_aa'),'Brand':('Inter-Bold.ttf',32,'reinforced_aa'),'Metric':('Inter-Bold.ttf',30,'reinforced_aa'),
+ 'HomeClock':('Inter-Bold.ttf',92,'reinforced_aa'),
  'VehicleSpeed':('Inter-Bold.ttf',152,'reinforced_aa'),
  'AltimeterMetric':('Inter-Bold.ttf',92,'reinforced_aa'),
  'Navigation':('Inter-SemiBold.ttf',15,'reinforced_aa'),'QualificationCurrent':('AtkinsonHyperlegible-Regular.ttf',18,'mono'),
