@@ -203,8 +203,8 @@ The verified Guardian contract uses **Fahrenheit as the source unit**. The Field
 
 ### Local time and device settings
 
-The status area uses system time synchronized by NTP after the Guardian-owned
-Wi-Fi connection is available. A PCF8563-compatible RTC provides holdover when
+The single-row status bar uses system time synchronized by NTP after locally
+provisioned Wi-Fi is available. A PCF8563-compatible RTC provides holdover when
 its voltage-low flag is clear, and a successful NTP synchronization updates the
 RTC in UTC. Device → **Device Settings** provides timezone, 12/24-hour format,
 sync state, manual NTP sync, and the last successful sync. Timezone and clock
@@ -213,7 +213,7 @@ format are persisted in NVS.
 The documented first-boot default is **UTC with a 24-hour clock**. Timezone
 choices use POSIX timezone/DST rules in the time service rather than dates or DST
 logic embedded in UI rendering. Until RTC or NTP time is trustworthy, the header
-shows `--:--` and `TIME SYNC`. Display dirtiness compares the visible minute and
+shows `--:--` and `TIME SYNC` on the same baseline. Display dirtiness compares the visible minute and
 date, never seconds.
 
 ### Field Terminal battery
@@ -667,14 +667,23 @@ Copy-Item src/secrets.example.h src/secrets.h
 
 Required macros are:
 
-- `SUPPORTFORGE_WIFI_SSID`
-- `SUPPORTFORGE_WIFI_PASSWORD`
 - `SUPPORTFORGE_PRIMARY_TELEMETRY_URL`
 - `SUPPORTFORGE_FALLBACK_TELEMETRY_URL`
 - `SUPPORTFORGE_GUARDIAN_TOKEN`
 - `SUPPORTFORGE_TARGET_HOST_NAME`
 
-`app_config.h` binds these macros to typed constants and contains only non-secret defaults, intervals, thresholds, and timeouts. If placeholders remain, the UI truthfully reports `SETUP REQUIRED` / `NOT CONFIGURED` and performs no network request.
+Wi-Fi is intentionally **not** a compile-time secret. On first boot, open
+**Device → Device Settings → Wi-Fi**, scan or enter a network locally, and save
+it to this terminal's NVS. Scanning is asynchronous and distinguishes a radio
+failure from a completed scan with no visible networks. **Forget** erases only
+the locally saved Wi-Fi credential and returns to `SETUP REQUIRED`; public builds
+never fall back to a repository credential.
+
+`app_config.h` binds the remaining macros to typed constants and contains only
+non-secret defaults, intervals, thresholds, and timeouts. If telemetry
+placeholders remain, the UI truthfully reports `SETUP REQUIRED` / `NOT CONFIGURED`
+and performs no Guardian request. Local battery, RTC, GPS, and other available
+data continue loading while Wi-Fi setup or background connection work is pending.
 
 Authentication uses the `x-guardian-telemetry-token` request header. Query-token compatibility is explicitly disabled, so tokens do not enter URLs, browser history, or endpoint diagnostics. Serial telemetry output is restricted to EP1/EP2, redacted path, transport category, HTTP status, parser result/recognized count, active endpoint, and snapshot version. It never prints SSID, password, MAC, configured URL, response body, or token data.
 

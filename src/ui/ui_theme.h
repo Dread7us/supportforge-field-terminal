@@ -44,22 +44,24 @@ constexpr Rect contractRect(const int (&rect)[4]) {
   return {rect[0], rect[1], rect[2], rect[3]};
 }
 
-constexpr Rect kNavBounds{0, kContentBottom, 5 * spec::kNavItemWidth, kNavHeight};
+constexpr Rect kNavBounds{0, kContentBottom, kCanvasWidth, kNavHeight};
 constexpr Rect kPrimaryContentBounds{kMargin, kAppBarHeight + 16,
                                       kCanvasWidth - 2 * kMargin,
                                       kContentBottom - kAppBarHeight - 32};
-constexpr Rect kDeviceDiagnosticsAction = contractRect(spec::kDeviceCards[3]);
+constexpr Rect kDeviceDiagnosticsAction{24,550,238,88};
 constexpr Rect kDeviceTouchSetupAction = contractRect(spec::kDeviceCards[4]);
-constexpr Rect kDeviceRefreshAction{24, 654, 238, 72};
-constexpr Rect kDeviceTemperatureAction{278, 654, 238, 72};
+constexpr Rect kDeviceRefreshAction{24,654,492,72};
+constexpr Rect kDeviceLowPowerAction{278,550,238,88};
 constexpr Rect kSystemsSectionAction{24, 742, 492, 72};
 constexpr Rect kDeviceSettingsAction = contractRect(spec::kDeviceCards[5]);
 constexpr Rect kDeviceDisplayRefreshAction = kDeviceRefreshAction;
+constexpr Rect kDeviceWifiAction = contractRect(spec::kDeviceCards[1]);
 constexpr Rect kSettingsTimezoneAction = contractRect(spec::kSettingsCards[1]);
 constexpr Rect kSettingsFormatAction = contractRect(spec::kSettingsCards[2]);
 constexpr Rect kSettingsSyncAction = contractRect(spec::kSettingsCards[4]);
 constexpr Rect kSettingsTouchAction{366, 642, 150, 82};
 constexpr Rect kSettingsLowPowerAction{24, 642, 150, 82};
+constexpr Rect kSettingsTemperatureAction = kSettingsLowPowerAction;
 constexpr Rect kSettingsSyncActionCompact{195, 642, 150, 82};
 constexpr Rect kSettingsTouchActionCompact = kSettingsTouchAction;
 constexpr Rect kTouchRecalibrateCancelAction{24, 742, 238, 72};
@@ -72,21 +74,25 @@ constexpr Rect kLocationWeatherSetupAction{278, 670, 238, 72};
 constexpr Rect kLocationWeatherRefreshAction{24, 758, 492, 72};
 constexpr Rect kLocationElevationAction{24, 396, 492, 58};
 constexpr Rect kSettingsWeatherAction{24, 758, 492, 72};
-constexpr Rect kDiagnosticsDisplayCalibrationAction{24, 632, 492, 158};
-constexpr Rect kDiagnosticsTextQualificationAction{24, 632, 492, 158};
-constexpr Rect kRefreshCancelAction{24, 742, 238, 72};
-constexpr Rect kRefreshConfirmAction{278, 742, 238, 72};
+constexpr Rect kDiagnosticsDisplayCalibrationAction{24, 632, 492, 126};
+constexpr Rect kDiagnosticsTextQualificationAction{24, 632, 492, 126};
 constexpr Rect kDetailBackAction{24, 776, 492, 72};
 constexpr Rect kHomeHostAction = contractRect(spec::kHomeCards[0]);
 constexpr Rect kHomeMetricsAction = contractRect(spec::kHomeCards[1]);
 constexpr Rect kHomeWeatherDetailAction = contractRect(spec::kHomeCards[2]);
 constexpr Rect kHomeMotionAction = contractRect(spec::kHomeCards[3]);
-constexpr Rect kHomeStorageAction{24,706,492,48};
-constexpr Rect kHomeNetworkAction{24,658,492,48};
-constexpr Rect kHomeBatteryAction{24,610,492,48};
+constexpr Rect kHomeStorageAction{24,686,492,56};
+constexpr Rect kHomeNetworkAction{24,630,492,56};
+constexpr Rect kHomeBatteryAction{24,574,492,56};
 constexpr Rect kHeaderBatteryAction = contractRect(spec::kHeaderBatteryBounds);
-constexpr Rect kGlobalRefreshAction = contractRect(spec::kFooterRefreshBounds);
+constexpr Rect kHeaderWifiAction = contractRect(spec::kHeaderWifiBounds);
 constexpr Rect kHeaderClockAction = contractRect(spec::kHeaderClockBounds);
+static_assert(kHomeBatteryAction.y + kHomeBatteryAction.h <= kHomeNetworkAction.y &&
+                  kHomeNetworkAction.y + kHomeNetworkAction.h <= kHomeStorageAction.y &&
+                  kHomeBatteryAction.h >= kMinimumTouchTarget &&
+                  kHomeNetworkAction.h >= kMinimumTouchTarget &&
+                  kHomeStorageAction.h >= kMinimumTouchTarget,
+              "HOME summary actions must remain fixed, disjoint qualified targets");
 constexpr Rect kDeviceBatteryAction = contractRect(spec::kDeviceCards[0]);
 constexpr Rect kWeatherDetailSetupAction{24,690,492,64};
 constexpr Rect kTimezoneBackAction{24,776,492,72};
@@ -96,6 +102,50 @@ constexpr Rect kSettingsRefreshModeAction{24, 540, 492, 86};
 constexpr Rect kRefreshModeActions[] = {
     {24, 180, 492, 144}, {24, 344, 492, 144}, {24, 508, 492, 164}};
 constexpr Rect kRefreshModeBackAction{24, 776, 492, 72};
+// Settings deliberately uses nearly all available content height. The former
+// 68 px rows and wide dead bands made physical taps unnecessarily demanding.
+constexpr Rect kSettingsCategoryActions[] = {
+    {24,108,238,92},{278,108,238,92},{24,208,238,92},{278,208,238,92},
+    {24,308,238,92},{278,308,238,92},{24,408,238,92},{278,408,238,92},
+    {24,508,492,108},{24,624,492,108},{24,740,492,108}};
+constexpr Rect kDateTimeTimezoneAction{24,280,492,88};
+constexpr Rect kDateTimeFormatAction{24,386,492,88};
+constexpr Rect kDateTimeSyncAction{24,492,492,88};
+constexpr Rect kUnitsTemperatureAction{24,150,492,100};
+constexpr Rect kUnitsSpeedAction{24,270,492,100};
+constexpr Rect kUnitsElevationAction{24,390,492,100};
+constexpr Rect kLocationSettingsGpsAction{24,304,492,88};
+constexpr Rect kLocationSettingsPrivacyAction{24,410,492,88};
+constexpr Rect kLocationSettingsWeatherAction{24,516,492,88};
+constexpr Rect kWifiScanAction{24,246,238,64};
+constexpr Rect kWifiManualAction{278,246,238,64};
+constexpr Rect kWifiDisconnectAction{24,326,238,64};
+constexpr Rect kWifiReconnectAction{278,326,238,64};
+constexpr Rect kWifiForgetAction{24,406,492,64};
+constexpr Rect kWifiBackAction{24,776,492,72};
+constexpr Rect kWifiNetworkActions[] = {{24,142,492,82},{24,234,492,82},{24,326,492,82},
+    {24,418,492,82},{24,510,492,82},{24,602,492,82}};
+constexpr Rect kWifiEntryKeys[] = {{24,326,82,68},{106,326,82,68},{188,326,82,68},{270,326,82,68},{352,326,82,68},{434,326,82,68},
+    {24,404,82,68},{106,404,82,68},{188,404,82,68},{270,404,82,68},{352,404,82,68},{434,404,82,68},
+    {24,482,82,68},{106,482,82,68},{188,482,82,68},{270,482,82,68},{352,482,82,68},{434,482,82,68},
+    {24,560,82,68},{106,560,82,68},{188,560,82,68},{270,560,82,68},{352,560,82,68},{434,560,82,68}};
+constexpr Rect kWifiEntryModeAction{24,648,150,64};
+constexpr Rect kWifiEntryDeleteAction{195,648,150,64};
+constexpr Rect kWifiEntryNextAction{366,648,150,64};
+constexpr Rect kWifiEntryCancelAction{24,776,238,72};
+constexpr Rect kWifiEntrySaveAction{278,776,238,72};
+constexpr Rect kCalculatorBackAction{24,72,126,60};
+constexpr Rect kCalculatorKeys[] = {
+    {24,336,114,108},{150,336,114,108},{276,336,114,108},{402,336,114,108},
+    {24,456,114,108},{150,456,114,108},{276,456,114,108},{402,456,114,108},
+    {24,576,114,108},{150,576,114,108},{276,576,114,108},{402,576,114,108},
+    {24,696,114,108},{150,696,114,108},{276,696,114,108},{402,696,114,228},
+    {24,816,114,108},{150,816,114,108},{276,816,114,108}};
+static_assert(kSettingsCategoryActions[10].y + kSettingsCategoryActions[10].h <= kContentBottom,
+              "settings actions must maximize content without entering the footer");
+static_assert(kCalculatorKeys[18].y + kCalculatorKeys[18].h <= kCanvasHeight &&
+                  kCalculatorKeys[15].y + kCalculatorKeys[15].h <= kCanvasHeight,
+              "calculator keys must maximize the full-screen route without clipping");
 constexpr Rect kLowPowerPresetActions[] = {
     {24,176,492,92}, {24,282,492,92}, {24,388,492,92},
     {24,494,492,92}, {24,600,492,92}};
@@ -106,12 +156,8 @@ static_assert(kTimezoneActions[4].y + kTimezoneActions[4].h < kTimezoneBackActio
               "timezone options and Back must not overlap");
 static_assert(kLowPowerPresetActions[4].y + kLowPowerPresetActions[4].h < kLowPowerBackAction.y,
               "low-power options and Back must not overlap");
-static_assert(kGlobalRefreshAction.w >= kMinimumTouchTarget &&
-                  kGlobalRefreshAction.h >= kMinimumTouchTarget,
-              "global refresh must remain a deliberate touch target");
-static_assert(kNavBounds.x + kNavBounds.w == kGlobalRefreshAction.x &&
-                  kGlobalRefreshAction.x + kGlobalRefreshAction.w == kCanvasWidth,
-              "footer navigation and refresh regions must tile the canvas");
+static_assert(5 * spec::kNavItemWidth == kCanvasWidth,
+              "five primary navigation targets must tile the full footer");
 static_assert(kRefreshModeActions[0].h >= kMinimumTouchTarget &&
                   kRefreshModeActions[1].h >= kMinimumTouchTarget &&
                   kRefreshModeActions[2].h >= kMinimumTouchTarget &&

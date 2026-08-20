@@ -5,7 +5,7 @@
 
 namespace ui {
 namespace spec {
-constexpr uint32_t kContractVersion = 6;
+constexpr uint32_t kContractVersion = 11;
 constexpr int kCanvasWidth = 540;
 constexpr int kCanvasHeight = 960;
 constexpr int kPhysicalWidth = 960;
@@ -14,16 +14,18 @@ constexpr int kFramebufferBitsPerPixel = 4;
 constexpr int kFramebufferStrideBytes = 480;
 constexpr int kMargin = 24;
 constexpr int kGrid = 8;
-constexpr int kAppBarHeight = 104;
+constexpr int kAppBarHeight = 64;
 constexpr int kNavHeight = 96;
 constexpr int kContentBottom = 864;
 constexpr int kMinimumTouchTarget = 56;
-constexpr int kNavItemWidth = 88;
-constexpr int kFooterRefreshBounds[4] = {440, 864, 100, 96};
-constexpr int kHeaderBrandBounds[4] = {24, 8, 270, 80};
-constexpr int kHeaderClockBounds[4] = {310, 8, 140, 80};
-constexpr int kHeaderBatteryBounds[4] = {462, 8, 66, 80};
-constexpr int kPrimaryContent[4] = {24, 120, 492, 728};
+constexpr int kNavItemWidth = 108;
+constexpr int kHeaderBaseline = 41;
+constexpr int kHeaderBrandBounds[4] = {8, 6, 156, 52};
+constexpr int kHeaderClockBounds[4] = {168, 6, 100, 52};
+constexpr int kHeaderDateBounds[4] = {272, 6, 84, 52};
+constexpr int kHeaderWifiBounds[4] = {360, 6, 32, 52};
+constexpr int kHeaderBatteryBounds[4] = {396, 6, 136, 52};
+constexpr int kPrimaryContent[4] = {24, 64, 492, 784};
 constexpr int kDeviceDiagnosticsAction[4] = {24, 550, 492, 88};
 constexpr int kDeviceTouchSetupAction[4] = {24, 654, 492, 72};
 constexpr int kDeviceSettingsAction[4] = {24, 742, 492, 72};
@@ -60,7 +62,7 @@ constexpr int kTouchTransitionCooldownMs = 120;
 constexpr int kTouchPostRefreshQuietMs = 150;
 
 constexpr int kHomeCardCount = 6;
-constexpr int kHomeCards[kHomeCardCount][4] = {{24, 128, 492, 154}, {24, 306, 238, 112}, {278, 306, 238, 112}, {24, 434, 238, 112}, {278, 434, 238, 112}, {24, 562, 492, 252}};
+constexpr int kHomeCards[kHomeCardCount][4] = {{24, 104, 492, 154}, {24, 282, 238, 112}, {278, 282, 238, 112}, {24, 410, 238, 112}, {278, 410, 238, 112}, {24, 538, 492, 276}};
 constexpr int kSystemsCardCount = 2;
 constexpr int kSystemsCards[kSystemsCardCount][4] = {{24, 144, 492, 326}, {24, 494, 492, 150}};
 constexpr int kRadioCardCount = 3;
@@ -74,7 +76,7 @@ constexpr int kDiagnosticsCards[kDiagnosticsCardCount][4] = {{24, 170, 492, 438}
 constexpr int kSettingsCardCount = 5;
 constexpr int kSettingsCards[kSettingsCardCount][4] = {{24, 128, 492, 148}, {24, 300, 492, 96}, {24, 420, 492, 96}, {24, 540, 492, 86}, {24, 650, 492, 96}};
 constexpr int kTouchSetupCardCount = 3;
-constexpr int kTouchSetupCards[kTouchSetupCardCount][4] = {{128, 160, 284, 142}, {128, 688, 284, 84}, {128, 790, 284, 128}};
+constexpr int kTouchSetupCards[kTouchSetupCardCount][4] = {{128, 300, 284, 142}, {128, 470, 284, 84}, {128, 580, 284, 128}};
 
 }  // namespace spec
 }  // namespace ui

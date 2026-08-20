@@ -31,6 +31,14 @@ class DisplayRefreshModeTests(unittest.TestCase):
         self.assertIn("requestRender(RenderPriority::Cosmetic)", CONTROLLER)
         self.assertIn("applied=IMMEDIATE", CONTROLLER)
 
+    def test_render_latch_retains_highest_priority_and_coalesces_duplicates(self):
+        block = CONTROLLER[CONTROLLER.index("void DisplayCoordinator::requestRender"):
+                           CONTROLLER.index("void DisplayCoordinator::setSnapshot")]
+        self.assertIn("static_cast<uint8_t>(priority) > static_cast<uint8_t>(pendingRender_)", block)
+        self.assertIn("pendingRender_ = priority", block)
+        self.assertIn("else ++renderCoalescedCount_", block)
+        self.assertLess(block.index("pendingRender_ = priority"), block.index("else ++renderCoalescedCount_"))
+
     def test_exact_cleanup_policy_is_central_and_only_consumes_real_demand(self):
         render = CONTROLLER[CONTROLLER.index("bool DisplayCoordinator::renderIfDirty"):
                             CONTROLLER.index("void DisplayCoordinator::printPerformance")]
@@ -53,29 +61,47 @@ class DisplayRefreshModeTests(unittest.TestCase):
         self.assertIn("refresh mode choices and Back must be large and non-overlapping", THEME)
         self.assertIn('actionButton(fb,kRefreshModeBackAction,"BACK")', PAGES)
 
-    def test_global_manual_refresh_is_confirmed_rate_limited_and_state_safe(self):
-        self.assertIn("kGlobalRefreshAction", MAIN + THEME)
-        self.assertIn("kFooterRefreshBounds", THEME)
+    def test_device_cleanup_is_immediate_rate_limited_and_state_safe(self):
+        self.assertIn("kDeviceDisplayRefreshAction", MAIN + THEME)
+        self.assertNotIn("kGlobalRefreshAction", MAIN + THEME)
+        self.assertNotIn("kFooterRefreshBounds", THEME)
         self.assertIn("bottomNavigation(fb,s.page)", PAGES)
         self.assertIn("kManualRefreshLimitMs = 45000", CONTROLLER)
-        self.assertIn("route=CONFIRMATION", MAIN)
+        self.assertNotIn("DisplayRefreshConfirm", STATE + MAIN + PAGES)
+        self.assertNotIn("route=CONFIRMATION", MAIN)
+        self.assertIn("target=CLEAN_DISPLAY immediate=YES", MAIN)
+        self.assertIn("displayCoordinator.manualFullRefresh(now,ui::Page::Device)", MAIN)
         manual = CONTROLLER[CONTROLLER.index("bool DisplayCoordinator::manualFullRefresh"):
                             CONTROLLER.index("bool DisplayCoordinator::dumpPackedFramebuffer")]
         for token in ("epd_fullclear", "memset(compositionBuffer_,0xFF",
-                      "returnSnapshot.page=returnPage", "MODE_GC16", "epd_poweroff"):
+                      "returnSnapshot.page=returnPage", "returnSnapshot.manualRefreshRateLimited=true",
+                      "returnSnapshot.manualRefreshRemainingSeconds=kManualRefreshLimitMs/1000",
+                      "MODE_GC16", "epd_poweroff"):
             self.assertIn(token, manual)
         self.assertIn("snapshot_.page=previousPage", manual)
         self.assertIn("requestRender(RenderPriority::Navigation)", manual)
+        self.assertIn("pendingRender_=RenderPriority::None", manual)
+        self.assertLess(manual.index("pendingRender_=RenderPriority::None"),
+                        manual.index("epd_fullclear"))
         self.assertIn("fullClearUsed_=true", manual)
         self.assertIn("++renderRenderedCount_", manual)
 
-    def test_global_refresh_outranks_page_local_hit_maps(self):
+    def test_cleanup_is_device_local_and_other_hit_maps_remain_intact(self):
         tap = MAIN[MAIN.index("} else if (action.type == input::ActionType::Tap)"):
                    MAIN.index("} else if (action.type == input::ActionType::SwipeLeft")]
-        global_route = tap.index("ui::kGlobalRefreshAction.contains")
-        weather_route = tap.index("displayCoordinator.page() == ui::Page::WeatherSetup")
-        self.assertLess(global_route, weather_route)
-        self.assertIn("footer utility must outrank page-local hit maps", tap)
+        self.assertNotIn("kGlobalRefreshAction", tap)
+        self.assertIn("displayCoordinator.page() == ui::Page::WeatherSetup", tap)
+        self.assertIn("displayCoordinator.page() == ui::Page::Device", tap)
+        self.assertIn("ui::kDeviceDisplayRefreshAction.contains", tap)
+
+    def test_swipes_are_primary_only_without_skipping_service_polling(self):
+        swipe = MAIN[MAIN.index("} else if (action.type == input::ActionType::SwipeLeft"):
+                     MAIN.index("// Touch routing always gets the first opportunity")]
+        self.assertIn("int index=-1", swipe)
+        self.assertIn("if(index>=0)", swipe)
+        self.assertNotRegex(swipe, r"if\s*\(index\s*<\s*0\)\s*return")
+        for page in ("Home", "Systems", "Radio", "Location", "Device"):
+            self.assertIn(f"ui::Page::{page}", swipe)
 
     def test_settings_back_remains_live_after_visiting_refresh_mode(self):
         self.assertNotIn("detailReturnPage=ui::Page::Settings;destination=ui::Page::DisplayRefreshMode", MAIN)
@@ -86,18 +112,43 @@ class DisplayRefreshModeTests(unittest.TestCase):
         self.assertIn("kRefreshModeBackAction.contains", mode_route)
         self.assertIn("destination=ui::Page::Settings", mode_route)
 
-    def test_one_slot_navigation_capture_is_first_wins_and_exactly_once(self):
+    def test_one_slot_action_capture_is_latest_wins_and_exactly_once(self):
         for token in ("xTaskCreatePinnedToCore", "beginDisplayCapture", "endDisplayCapture",
                       "takeQueuedAction", "queuedActionPending_", "action_queue_hwm=1"):
             self.assertIn(token, MAIN + TOUCH + TOUCH_H)
-        self.assertIn("ui::kNavBounds.contains", TOUCH)
-        self.assertIn("ui::kDetailBackAction.contains", TOUCH)
-        self.assertIn("if(!queuedActionPending_)", TOUCH)
-        self.assertIn("else{++coalescedActionCount_;}", TOUCH)
+        capture = TOUCH[TOUCH.index("void TouchController::captureTask()"):
+                        TOUCH.index("bool TouchController::beginDisplayCapture")]
+        for action in ("ActionType::Tap", "ActionType::SwipeLeft", "ActionType::SwipeRight"):
+            self.assertIn(action, capture)
+        self.assertIn("if(queuedActionPending_)++coalescedActionCount_", capture)
+        self.assertIn("queuedAction_=action;queuedActionPending_=true", capture)
+        self.assertNotIn("if(!queuedActionPending_)", capture)
         take = TOUCH[TOUCH.index("bool TouchController::takeQueuedAction"):TOUCH.index("void TouchController::drainStaleReports")]
         self.assertIn("queuedActionPending_=false", take)
         self.assertIn("!inputBlocked&&touchController.takeQueuedAction", MAIN)
         self.assertNotRegex(CONTROLLER_H, r"vector|deque|list<|Queue")
+
+    def test_capture_shutdown_is_nonblocking_and_cleanup_limit_starts_on_real_work(self):
+        end = TOUCH[TOUCH.index("void TouchController::endDisplayCapture"):
+                    TOUCH.index("bool TouchController::takeQueuedAction")]
+        self.assertNotRegex(end, r"while\s*\(|delay\s*\(")
+        self.assertIn("displayCaptureFinalizePending_=true", end)
+        self.assertIn("displayCaptureSettled()", TOUCH_H)
+        self.assertIn("portMUX_TYPE captureMux_", TOUCH_H)
+        self.assertNotIn("volatile bool displayCapture", TOUCH_H)
+        for lifecycle in ("beginDisplayCapture", "endDisplayCapture", "displayCaptureSettled"):
+            block = TOUCH[TOUCH.index(f"TouchController::{lifecycle}"):]
+            self.assertIn("portENTER_CRITICAL(&captureMux_)", block[:700])
+            self.assertIn("portEXIT_CRITICAL(&captureMux_)", block[:700])
+        self.assertIn("captureSettled=touchController.displayCaptureSettled()", MAIN)
+        self.assertIn("if(captureSettled&&!queuedAction)action=touchController.poll", MAIN)
+        capture = TOUCH[TOUCH.index("void TouchController::captureTask()"):
+                        TOUCH.index("bool TouchController::beginDisplayCapture")]
+        self.assertIn("notifyDisplayUpdateFinished(millis())", capture)
+        manual = CONTROLLER[CONTROLLER.index("bool DisplayCoordinator::manualFullRefresh"):
+                            CONTROLLER.index("bool DisplayCoordinator::dumpPackedFramebuffer")]
+        self.assertLess(manual.index("epd_poweron()"), manual.index("lastManualRefreshMs_=millis()"))
+        self.assertLess(manual.index("lastManualRefreshMs_=millis()"), manual.index("epd_fullclear"))
 
     def test_physical_timings_and_completion_based_quiet_gate_are_reported(self):
         for token in ("gc16_duration_ms", "full_cleanup_duration_ms",

@@ -18,36 +18,63 @@ def load(name,path):
 contract_gen=load('contract_gen',ROOT/'tools/generate_ui_contract.py'); framebuffer=load('framebuffer',ROOT/'tools/framebuffer_to_png.py')
 class UiContractTests(unittest.TestCase):
  def test_header_regions_are_fixed_disjoint_and_inside_app_bar(self):
-  g=SPEC['geometry']; names=('header_brand_bounds','header_clock_bounds','header_battery_bounds')
+  g=SPEC['geometry']; names=('header_brand_bounds','header_clock_bounds','header_date_bounds','header_wifi_bounds','header_battery_bounds')
   regions=[g[name] for name in names]
   for x,y,w,h in regions:
    self.assertGreater(w,0); self.assertGreater(h,0); self.assertGreaterEqual(x,0); self.assertGreaterEqual(y,0)
-   self.assertLessEqual(x+w,SPEC['canvas']['width']); self.assertLessEqual(y+h,g['app_bar_height']-1)
-  for left,right in zip(regions,regions[1:]): self.assertLessEqual(left[0]+left[2],right[0])
+   self.assertLessEqual(x+w,SPEC['canvas']['width']); self.assertLessEqual(y+h,g['app_bar_height'])
+  intersects=lambda a,b:a[0]<b[0]+b[2] and b[0]<a[0]+a[2] and a[1]<b[1]+b[3] and b[1]<a[1]+a[3]
+  for i,left in enumerate(regions):
+   for right in regions[i+1:]: self.assertFalse(intersects(left,right),(left,right))
   self.assertIn('static_assert(spec::kHeaderBrandBounds',COMPONENTS)
   self.assertIn('"brand and clock regions overlap"',COMPONENTS)
-  self.assertIn('"clock and battery regions overlap"',COMPONENTS)
-  refresh=SPEC['geometry']['footer_refresh_bounds']
-  self.assertGreaterEqual(refresh[0],440); self.assertEqual(refresh[1]+refresh[3],SPEC['canvas']['height'])
-  for region in regions: self.assertFalse(region[1] < refresh[1]+refresh[3] and refresh[1] < region[1]+region[3])
+  self.assertIn('"clock and date regions overlap"',COMPONENTS)
+  self.assertIn('"time/date and Wi-Fi regions overlap"',COMPONENTS)
+  self.assertIn('"Wi-Fi and battery regions overlap"',COMPONENTS)
+  self.assertNotIn('footer_refresh_bounds',SPEC['geometry'])
+  self.assertEqual(g['app_bar_height'],64)
+  self.assertEqual(len({region[1] for region in regions}),1)
+  self.assertEqual(len({region[3] for region in regions}),1)
+  self.assertGreaterEqual(g['header_clock_bounds'][3],METRICS['roles']['Caption']['line_height'])
+  self.assertGreaterEqual(g['header_date_bounds'][3],METRICS['roles']['Caption']['line_height'])
  def test_header_is_white_clipped_aligned_and_brand_drawn_once(self):
   app=COMPONENTS[COMPONENTS.index('void appBar('):COMPONENTS.index('void card(')]
   self.assertEqual(app.count('"supportFORGE"'),1)
   self.assertEqual(app.count('epd_fill_rect({brandClip.x'),1)
   self.assertEqual(app.count('epd_fill_rect({clockClip.x'),1)
+  self.assertEqual(app.count('epd_fill_rect({dateClip.x'),1)
+  self.assertEqual(app.count('epd_fill_rect({wifiClip.x'),1)
   self.assertEqual(app.count('epd_fill_rect({batteryClip.x'),1)
-  self.assertEqual(app.count(',kPaper,fb);'),3)
+  self.assertEqual(app.count(',kPaper,fb);'),6)
   self.assertNotIn('kInk,fb);\n  const Rect brandClip',app)
-  self.assertIn('fonts::kBrand.ascent',app)
-  self.assertIn('clockClip.x + clockClip.w - textWidth(time',app)
-  self.assertIn('clockClip.x + clockClip.w - textWidth(date',app)
-  self.assertIn('batteryClip.x + (batteryClip.w-textWidth(battery',app)
+  for token in ('brandClip,brandClip.x,spec::kHeaderBaseline',
+                'clockClip,max(clockClip.x,clockX),spec::kHeaderBaseline',
+                'dateClip,max(dateClip.x,dateX),spec::kHeaderBaseline',
+                'stateClip,stateClip.x,spec::kHeaderBaseline'):
+   self.assertIn(token,app)
+  self.assertEqual(app.count('centeredBaseline('),0)
+  self.assertNotIn('subtitle',app.lower())
+  self.assertNotIn('"FIELD TERMINAL"',app)
+  self.assertIn('clockClip.w-textWidth(time,FontRole::CardHeading)',app)
+  self.assertIn('dateClip.w-textWidth(date,FontRole::Caption)',app)
   self.assertEqual(app.count('epd_draw_hline'),1)
+  self.assertIn('epd_fill_rect({0,kAppBarHeight-1,kCanvasWidth,9},kPaper,fb)',app)
+  def width(value,role): return sum(METRICS['roles'][role]['advances'][ord(c)-32] for c in value)
+  self.assertLessEqual(width('12:59 PM','CardHeading'),SPEC['geometry']['header_clock_bounds'][2])
+  self.assertLessEqual(width('--:--','CardHeading'),SPEC['geometry']['header_clock_bounds'][2])
+  self.assertLessEqual(width('TIME SYNC','Caption'),SPEC['geometry']['header_date_bounds'][2])
+  brand=METRICS['roles']['CardHeading']; brand_width=width('supportFORGE','CardHeading')
+  self.assertLessEqual(brand_width,SPEC['geometry']['header_brand_bounds'][2])
+  self.assertLessEqual(brand['line_height'],SPEC['geometry']['header_brand_bounds'][3])
+  self.assertIn('batteryClip.x+56,spec::kHeaderBaseline-25,80,32',app)
+  self.assertIn('batteryStateLabel="FULL"',app)
+  self.assertIn('batteryStateLabel="VERIFY"',app)
+  self.assertIn('batteryStateLabel="LKG"',app)
+  self.assertIn('batteryStateLabel="ERR"',app)
  def test_header_unavailable_states_and_battery_fill_truthfulness(self):
   app=COMPONENTS[COMPONENTS.index('void appBar('):COMPONENTS.index('void card(')]
   battery_icon=COMPONENTS[COMPONENTS.index('void batteryIcon('):COMPONENTS.index('void circle(')]
-  self.assertIn('String time = "--:--"',app); self.assertIn(': "TIME SYNC"',app)
-  self.assertIn(': "--"',app)
+  self.assertIn('String time = "--:--"',app); self.assertIn(':"TIME SYNC"',app)
   self.assertIn('if (!percentAvailable || !battery::validPercent(percent))',battery_icon)
   self.assertIn('min<uint8_t>(percent, 100)',battery_icon)
   self.assertIn('const String unknown = "--"',battery_icon)
@@ -58,14 +85,41 @@ class UiContractTests(unittest.TestCase):
   self.assertGreater(battery_icon.index('const Rect filled'),battery_icon.index('if (!percentAvailable'))
  def test_battery_percentage_text_fits_every_value_and_uses_split_contrast(self):
   advances=METRICS['roles']['Caption']['advances']; width=lambda s:sum(advances[ord(c)-32] for c in s)
-  # Header glyph bounds are 62 px; body/interior subtract 5 and then 6.
-  interior_width=62-5-6
-  self.assertTrue(all(width(str(value)) <= interior_width for value in range(101)))
+  # Compact header glyph is 80 px; body/interior subtract 5 and then 6.
+  interior_width=80-5-6
+  self.assertTrue(all(width(str(value)) <= interior_width for value in (0,9,10,87,99,100)))
+  self.assertLessEqual(width('--'),interior_width)
   battery_icon=COMPONENTS[COMPONENTS.index('void batteryIcon('):COMPONENTS.index('void circle(')]
   self.assertIn('text(fb, filled, labelX',battery_icon)
   self.assertIn('text(fb, unfilled, labelX',battery_icon)
   self.assertIn('state == battery::State::Charging',battery_icon)
   self.assertNotRegex(battery_icon.lower(),r'millis\(|delay\(|frame\s*\+\+')
+ def test_wifi_header_vertical_geometry_and_visual_weight(self):
+  g=SPEC['geometry']; wifi=g['header_wifi_bounds']
+  self.assertEqual(g['header_baseline'],41)
+  self.assertEqual(wifi[1],6)
+  self.assertEqual(wifi[1]+wifi[3],58)
+  icon=COMPONENTS[COMPONENTS.index('void wifiIcon('):COMPONENTS.index('void appBar(')]
+  self.assertIn('constexpr int kBarCount=4,kBarWidth=4,kBarGap=3',icon)
+  self.assertIn('bottom=spec::kHeaderBaseline+2',icon)
+  self.assertIn('if(index<bars)epd_fill_rect',icon)
+  self.assertIn('else epd_draw_rect',icon)
+  self.assertNotRegex(icon,r'epd_draw_circle|epd_fill_circle|epd_draw_line|cos\(|sin\(')
+  home=SPEC['pages']['home']['cards']
+  self.assertEqual(home[0][1],104)
+  self.assertEqual(home[-1],[24,538,492,276])
+  self.assertLess(home[-1][1]+home[-1][3],SPEC['geometry']['content_bottom'])
+  home_renderer=PAGES[PAGES.index('void home('):PAGES.index('void systems(')]
+  clear='epd_fill_rect({kMargin,kAppBarHeight,kCanvasWidth-2*kMargin,'
+  self.assertIn(clear,home_renderer)
+  self.assertLess(home_renderer.index(clear),home_renderer.index('card(fb,contractRect(spec::kHomeCards[0])'))
+ def test_display_completion_establishes_idle_release_without_sacrificing_next_tap(self):
+  finished=TOUCH[TOUCH.index('void TouchController::notifyDisplayUpdateFinished'):
+                 TOUCH.index('bool TouchController::readRaw')]
+  self.assertIn('releaseObserved_=true',finished)
+  self.assertIn('cleanReleaseSinceMs_=nowMs',finished)
+  self.assertIn('release_baseline=ESTABLISHED',finished)
+  self.assertNotIn('releaseObserved_=false',finished)
  def test_generated_contract_and_weighted_embedded_fonts(self):
   self.assertEqual(GENERATED,contract_gen.render_header(SPEC)); self.assertEqual(SPEC['font']['family'],'Inter')
   self.assertIn('Inter 4.1 and Atkinson Hyperlegible (OFL-1.1)',FONTS)
@@ -108,7 +162,7 @@ class UiContractTests(unittest.TestCase):
   for value in ('0','999','1,245','12,345','--'):
    self.assertLessEqual(width(value),bounds[2],value)
    self.assertLessEqual(metric['line_height'],bounds[3],value)
-  alt=PAGES[PAGES.index('void altimeter('):PAGES.index('void actionButton(uint8_t* fb,Rect bounds,const String& label,bool selected){')]
+  alt=PAGES[PAGES.index('void altimeter('):PAGES.index('String lastTimeSync(')]
   clear='epd_fill_rect({kAltimeterMetricBounds.x,kAltimeterMetricBounds.y,'
   draw='centeredText(fb,kAltimeterMetricBounds,gpsElevationValue(s.location,false),'
   self.assertIn(clear,alt); self.assertIn(draw,alt); self.assertLess(alt.index(clear),alt.index(draw))
@@ -171,12 +225,13 @@ class UiContractTests(unittest.TestCase):
   self.assertIn('stale_state=DRAINED',TOUCH)
  def test_white_test_guard_partial_off_gc16_and_poweroff(self):
   self.assertIn('whiteTestUsed_ || updating_',CONTROLLER); self.assertIn('"WHITE TEST"',CONTROLLER); self.assertIn('command == "display white-test"',MAIN); self.assertIn('kPartialRefreshEnabled = false',THEME); self.assertNotIn('MODE_DU',CONTROLLER); self.assertGreaterEqual(CONTROLLER.count('MODE_GC16'),2); self.assertGreaterEqual(CONTROLLER.count('epd_poweroff'),2)
- def test_cleanup_schema_and_preserved_policy(self):
-  self.assertIn('kDisplayCleanupRevision = 10',MAIN); self.assertIn('bootRecovery && !fullClearUsed_',CONTROLLER); render=CONTROLLER[CONTROLLER.index('bool DisplayCoordinator::renderIfDirty'):CONTROLLER.index('bool DisplayCoordinator::renderWhiteTest')]; self.assertEqual(render.count('epd_fullclear'),1)
+ def test_cleanup_schema_and_every_boot_physical_history_policy(self):
+  self.assertIn('kDisplayCleanupRevision = 11',MAIN); self.assertIn('bootRecovery && !fullClearUsed_',CONTROLLER); render=CONTROLLER[CONTROLLER.index('bool DisplayCoordinator::renderIfDirty'):CONTROLLER.index('bool DisplayCoordinator::renderWhiteTest')]; self.assertEqual(render.count('epd_fullclear'),1)
   setup=MAIN[MAIN.index('void setup()'):MAIN.index('void loop()')]
-  self.assertIn('bootCleanupPending = storedRevision != kDisplayCleanupRevision',setup)
-  self.assertIn('policy=REVISION_ONLY',setup); self.assertIn('policy=SAFE_NORMAL_BOOT',setup)
-  self.assertNotIn('policy=EVERY_BOOT',MAIN); self.assertNotIn('bootCleanupPending = true',setup)
+  self.assertGreaterEqual(setup.count('bootCleanupPending = true'),2)
+  self.assertIn('policy=EVERY_BOOT',setup)
+  self.assertNotIn('bootCleanupPending = storedRevision != kDisplayCleanupRevision',setup)
+  self.assertNotIn('revision-gated cleanup',MAIN)
   self.assertIn('manualFullRefresh',CONTROLLER); self.assertIn('renderWhiteTest',CONTROLLER)
   self.assertIn('EPD_ROT_INVERTED_PORTRAIT',CONTROLLER); self.assertIn('epd_set_vcom(1560)',CONTROLLER); self.assertNotIn('.transmit(',MAIN); self.assertIn('hq::kBoard.gpsRx, -1',MAIN)
  def test_startup_renders_usable_page_once_then_starts_workers_in_background(self):
@@ -216,14 +271,20 @@ class UiContractTests(unittest.TestCase):
   nav=METRICS['roles']['Navigation']; self.assertEqual((nav['weight'],nav['size']),('SemiBold',15))
   advances=nav['advances']; width=lambda s:sum(advances[ord(c)-32] for c in s)
   for label,bounds in zip(SPEC['navigation']['labels'],SPEC['navigation']['bounds']): self.assertLess(width(label),bounds[2]-6); self.assertEqual(bounds[1]+bounds[3],960)
-  utility=SPEC['navigation']['utility']; self.assertEqual(utility['label'],'REFRESH')
-  self.assertEqual(SPEC['navigation']['bounds'][-1][0]+SPEC['navigation']['bounds'][-1][2],utility['bounds'][0])
-  self.assertEqual(utility['bounds'][0]+utility['bounds'][2],SPEC['canvas']['width'])
-  self.assertIn('globalRefreshControlImpl(fb)',COMPONENTS[COMPONENTS.index('void bottomNavigation'):])
+  self.assertNotIn('utility',SPEC['navigation'])
+  all_bounds=SPEC['navigation']['bounds']
+  self.assertTrue(all(b[1:]==[864,108,96] for b in SPEC['navigation']['bounds']))
+  self.assertTrue(all(a[0]+a[2]==b[0] for a,b in zip(all_bounds,all_bounds[1:])))
+  self.assertEqual(all_bounds[-1][0]+all_bounds[-1][2],SPEC['canvas']['width'])
+  self.assertTrue(all(b[2]>=SPEC['geometry']['minimum_touch_target'] and b[3]>=SPEC['geometry']['minimum_touch_target'] for b in all_bounds))
+  self.assertIn('five equal navigation tiles must span the full canvas',COMPONENTS)
+  self.assertNotIn('globalRefreshControl',COMPONENTS)
   self.assertIn('FontRole::Navigation',COMPONENTS); self.assertIn('active?kPaper:kInk',COMPONENTS)
  def test_primary_palette_and_required_labels_never_pale(self):
   self.assertNotIn('opacity',COMPONENTS.lower()+PAGES.lower()); self.assertNotIn('alpha',COMPONENTS.lower()+PAGES.lower())
-  for label in ('supportFORGE','FIELD TERMINAL','SETUP REQUIRED','SYSTEMS','RADIO','LOCATION','DEVICE','UI QUAL 3'): self.assertIn(label,PAGES+COMPONENTS+MAIN)
+  for label in ('supportFORGE','SETUP REQUIRED','SYSTEMS','RADIO','LOCATION','DEVICE','UI QUAL 3'): self.assertIn(label,PAGES+COMPONENTS+MAIN)
+  app=COMPONENTS[COMPONENTS.index('void appBar('):COMPONENTS.index('void card(')]
+  self.assertNotIn('FIELD TERMINAL',app); self.assertIn('FIELD TERMINAL',PAGES)
   self.assertEqual(SPEC['palette']['ink'],0); self.assertEqual(SPEC['palette']['ink_muted'],0)
  def test_dump_is_authoritative_unpowered_and_touch_persistence_preserved(self):
   dump=CONTROLLER[CONTROLLER.index('bool DisplayCoordinator::dumpPackedFramebuffer'):]
@@ -250,6 +311,6 @@ class UiContractTests(unittest.TestCase):
   self.assertIn('x-guardian-telemetry-token',manager); self.assertNotIn('?token=',manager+config); self.assertIn('path=REDACTED',manager)
   self.assertIn('kQueryTokenCompatibilityEnabled = false',config); self.assertIn('kPollIntervalMs = 60000',config); self.assertIn('kOfflineFailedCycles = 3',config)
   self.assertIn('parseGuardianPayload',parser); self.assertIn('JsonObjectConst root',parser); self.assertIn('recognizedFields',model)
-  for phrase in ('915 MHz region - transmission disabled','TX LOCKED','RECEIVE ONLY','COORDINATES","PRIVATE') : self.assertIn(phrase,PAGES)
+  for phrase in ('SAFETY CONFIGURATION REQUIRED','TRANSMIT LOCKED','RECEIVE ONLY','COORDINATES","PRIVATE') : self.assertIn(phrase,PAGES)
   self.assertNotIn('.transmit(',MAIN); self.assertIn('hq::kBoard.gpsRx, -1',MAIN); self.assertIn('MODE_GC16',CONTROLLER); self.assertNotIn('MODE_DU',CONTROLLER); self.assertIn('epd_poweroff()',CONTROLLER)
 if __name__=='__main__': unittest.main()

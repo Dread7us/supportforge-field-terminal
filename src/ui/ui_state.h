@@ -9,6 +9,7 @@
 #include "weather/weather_wizard.h"
 #include "location/gps_manager.h"
 #include "power/low_power_manager.h"
+#include "network/wifi_manager.h"
 
 namespace ui {
 
@@ -25,7 +26,6 @@ enum class Page : uint8_t {
   TouchSetup,
   TouchRecalibrateConfirm,
   WeatherSetup,
-  DisplayRefreshConfirm,
   SystemHealth,
   SystemMetrics,
   Storage,
@@ -37,7 +37,15 @@ enum class Page : uint8_t {
   TimezoneSetup,
   LowPowerSetup,
   LowPowerStatus,
-  DisplayRefreshMode
+  DisplayRefreshMode,
+  DateTimeSettings,
+  UnitsSettings,
+  LocationPrivacySettings,
+  WifiSettings,
+  WifiNetworks,
+  WifiEntry,
+  WifiForgetConfirm,
+  Calculator
 };
 enum class Presence : uint8_t { Unknown, NotPresent, Observed };
 enum class RefreshMode : uint8_t { QuickNavigation, Balanced, BeautifulClean };
@@ -85,9 +93,17 @@ struct UiSnapshot {
   location::Snapshot location{};
   power::Snapshot lowPower{};
   telemetry::Snapshot telemetry{};
+  network::Snapshot wifi{};
+  char wifiEntrySsid[network::kMaximumSsidBytes + 1]{};
+  uint8_t wifiPasswordLength = 0;
+  bool wifiEditingPassword = false;
+  uint8_t wifiKeyboardPage = 0;
+  char calculatorDisplay[32] = "0";
+  bool calculatorError = false;
   uint32_t nextPollSeconds = 0;
   uint8_t systemsSection = 0;
   bool manualRefreshRateLimited = false;
+  uint32_t manualRefreshRemainingSeconds = 0;
   RefreshMode refreshMode = RefreshMode::Balanced;
   uint32_t displayGc16DurationMs = 0;
   uint32_t displayCleanupDurationMs = 0;

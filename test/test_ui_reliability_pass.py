@@ -28,28 +28,22 @@ class UiReliabilityPassTests(unittest.TestCase):
         # actionButton selects CardHeading where possible and reflows to Body;
         # these are the narrowest visible bounds used by each required label.
         required = {
-            "BACK": (112, 56), "CANCEL": (238, 64), "CONFIRM": (238, 64),
+            "BACK": (112, 56), "CANCEL": (238, 64),
             "QUICK NAVIGATION": (492, 144),
             "BALANCED": (492, 144), "BEAUTIFUL / CLEAN": (492, 164),
             "LOW POWER MODE": (492, 54),
+            "DISPLAY CLEANUP AVAILABLE IN 45 SECONDS": (492, 72),
         }
         for label, (button_width, button_height) in required.items():
             usable = (button_width - 24, button_height - 16)
             fits = any(width(label, role) <= usable[0] and advances[role]["line_height"] <= usable[1]
                        for role in ("CardHeading", "Body", "Caption"))
             self.assertTrue(fits, label)
-        # The always-reachable footer utility uses one readable navigation label.
-        global_control = COMPONENTS[COMPONENTS.index("void globalRefreshControlImpl"):
-                                    COMPONENTS.index("int glyphIndex")]
-        self.assertIn('const String label="REFRESH"', global_control)
-        self.assertLessEqual(width("REFRESH", "Navigation"), 100 - 6)
+        self.assertNotIn("globalRefreshControl", COMPONENTS)
 
     def test_mobile_geometry_stays_inside_safe_content_and_targets_are_large(self):
         rects = {
-            "device refresh": (24, 654, 238, 72),
-            "device temperature": (278, 654, 238, 72),
-            "refresh cancel": (24, 742, 238, 72),
-            "refresh confirm": (278, 742, 238, 72),
+            "device cleanup": (24, 654, 492, 72),
             "location gps": (24, 582, 238, 72),
             "location unit": (278, 582, 238, 72),
             "location privacy": (24, 670, 238, 72),
@@ -61,9 +55,35 @@ class UiReliabilityPassTests(unittest.TestCase):
             self.assertGreaterEqual(height, 56, name)
             self.assertLessEqual(x + width, 516, name)
             self.assertLessEqual(y + height, 864, name)
-        self.assertEqual(rects["device temperature"][0] -
-                         (rects["device refresh"][0] + rects["device refresh"][2]), 16)
         self.assertIn("kMinimumTouchTarget = spec::kMinimumTouchTarget", THEME)
+
+    def test_touch_setup_cards_do_not_cover_physical_targets(self):
+        import json
+        spec = json.loads(source("ui/ui_spec.json"))
+        cards = spec["pages"]["touch_setup"]["cards"]
+        touch = spec["touch"]
+        radius = touch["target_radius"]
+        targets = ((touch["corner_x"], touch["corner_y"]),
+                   (540-touch["corner_x"], touch["corner_y"]),
+                   (touch["corner_x"], 960-touch["corner_y"]),
+                   (540-touch["corner_x"], 960-touch["corner_y"]))
+        for x, y, w, h in cards:
+            self.assertLessEqual(x+w, 540)
+            self.assertLessEqual(y+h, 864)
+            for tx, ty in targets:
+                self.assertFalse(x < tx+radius and tx-radius < x+w and
+                                 y < ty+radius and ty-radius < y+h,
+                                 ((x,y,w,h),(tx,ty)))
+
+    def test_wifi_states_are_stable_dark_and_have_no_disconnected_slash(self):
+        wifi = COMPONENTS[COMPONENTS.index("void wifiIcon("):
+                          COMPONENTS.index("void appBar(")]
+        self.assertIn("epd_fill_rect({bounds.x,bounds.y,bounds.w,bounds.h},kPaper,fb)", wifi)
+        self.assertIn("kBarCount=4", wifi)
+        self.assertIn("index<bars", wifi)
+        self.assertIn("epd_fill_rect", wifi)
+        self.assertIn("epd_draw_rect", wifi)
+        self.assertNotRegex(wifi, r"epd_draw_line|epd_draw_circle|epd_fill_circle")
 
     def test_primary_text_is_black_on_white_and_selected_fill_is_intentional(self):
         self.assertIn("kInk == 0x00 && kInkMuted == 0x00 && kRule == 0x00", THEME)
@@ -73,12 +93,17 @@ class UiReliabilityPassTests(unittest.TestCase):
         self.assertNotRegex(PAGES.lower(), r"fade|opacity|animate|blink")
 
     def test_every_route_has_a_fitted_visible_title(self):
-        self.assertIn('const String subtitle="FIELD TERMINAL"', COMPONENTS)
+        app_bar = COMPONENTS[COMPONENTS.index("void appBar("):
+                             COMPONENTS.index("void card(")]
+        qualification = PAGES[PAGES.index("void displayCalibration("):
+                              PAGES.index("void settings(")]
+        self.assertNotIn('subtitle', app_bar.lower())
+        self.assertNotIn('FIELD TERMINAL', app_bar)
         self.assertIn("(void)section", COMPONENTS)
-        self.assertIn("fittedText(subtitle,FontRole::Body,brandClip.w)", COMPONENTS)
+        self.assertIn('"FIELD TERMINAL"', qualification)
         for title in ("SYSTEMS", "RADIO", "LOCATION", "DEVICE", "HARDWARE DIAGNOSTICS",
                       "SETTINGS", "WEATHER SETUP", "TOUCH SETUP", "TEXT QUALIFICATION",
-                      "REFRESH DISPLAY"):
+                      "DISPLAY REFRESH MODE"):
             self.assertIn(title, PAGES + STATE)
 
     def test_dynamic_text_is_fitted_and_full_frame_is_cleared_before_every_page(self):
@@ -106,22 +131,23 @@ class UiReliabilityPassTests(unittest.TestCase):
         version_block_end = loop.index("// A render deferred")
         version_block = loop[:version_block_end]
         self.assertNotIn("displayCoordinator.dirty()", version_block)
-        self.assertIn("if (displayCoordinator.dirty() && !displayCoordinator.inputBlocked(millis()))", loop)
+        self.assertIn("if (displayCoordinator.dirty() && touchController.displayCaptureSettled() &&", loop)
+        self.assertIn("!displayCoordinator.inputBlocked(millis())) testDisplay();", loop)
         self.assertIn("failedUpdateRetryUsed_", CONTROLLER_H)
         self.assertEqual(CONTROLLER.count("requestRender(renderingPriority)"), 3)
         self.assertIn("DISPLAY retry=QUEUED limit=ONE", CONTROLLER)
         self.assertIn("DISPLAY retry=SUPPRESSED reason=REPEATED_UPDATE_FAILURE", CONTROLLER)
 
-    def test_manual_refresh_is_discoverable_deliberate_and_rate_limited(self):
-        for label in ("REFRESH DISPLAY", "CONFIRM REFRESH", "CANCEL", "READY TO CLEAN",
-                      "WAIT 45 SECONDS", "REFRESHING_DISPLAY"):
+    def test_manual_cleanup_is_discoverable_immediate_and_rate_limited(self):
+        for label in ("CLEAN DISPLAY", "DISPLAY CLEANUP AVAILABLE IN ", "CLEANING_DISPLAY"):
             self.assertIn(label, PAGES + CONTROLLER)
-        self.assertIn("Page::DisplayRefreshConfirm", STATE + MAIN)
+        self.assertNotIn("Page::DisplayRefreshConfirm", STATE + MAIN)
+        self.assertNotIn("CONFIRM REFRESH", PAGES + MAIN)
         self.assertIn("kDeviceDisplayRefreshAction", MAIN)
-        self.assertIn("kRefreshConfirmAction", MAIN)
+        self.assertNotIn("kRefreshConfirmAction", MAIN + THEME)
         self.assertIn("kManualRefreshLimitMs = 45000", CONTROLLER)
         self.assertIn("manualRefreshAvailable(now)", MAIN)
-        self.assertIn("confirmation=DELIBERATE", MAIN)
+        self.assertIn("target=CLEAN_DISPLAY immediate=YES", MAIN)
 
     def test_manual_refresh_sequence_preserves_state_and_powers_off(self):
         block = CONTROLLER[CONTROLLER.index("bool DisplayCoordinator::manualFullRefresh"):

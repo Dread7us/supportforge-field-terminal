@@ -24,8 +24,6 @@ namespace appconfig {
 
 enum class TemperatureUnit : uint8_t { Celsius, Fahrenheit };
 
-constexpr const char* kWifiSsid = SUPPORTFORGE_WIFI_SSID;
-constexpr const char* kWifiPassword = SUPPORTFORGE_WIFI_PASSWORD;
 constexpr const char* kPrimaryTelemetryUrl = SUPPORTFORGE_PRIMARY_TELEMETRY_URL;
 constexpr const char* kFallbackTelemetryUrl = SUPPORTFORGE_FALLBACK_TELEMETRY_URL;
 constexpr const char* kGuardianToken = SUPPORTFORGE_GUARDIAN_TOKEN;
@@ -62,9 +60,7 @@ inline bool placeholder(const char* value, const char* expected) {
 }
 
 inline bool configured() {
-  return !placeholder(kWifiSsid, "YOUR_WIFI_SSID") &&
-         !placeholder(kWifiPassword, "YOUR_WIFI_PASSWORD") &&
-         !placeholder(kGuardianToken, "YOUR_FIELD_TERMINAL_TOKEN") &&
+  return !placeholder(kGuardianToken, "YOUR_FIELD_TERMINAL_TOKEN") &&
          !placeholder(kGuardianToken, "YOUR_DEVICE_SPECIFIC_TOKEN") &&
          !placeholder(kTargetHostName, "YOUR_MONITORED_HOST") &&
          kPrimaryTelemetryUrl && kPrimaryTelemetryUrl[0] &&

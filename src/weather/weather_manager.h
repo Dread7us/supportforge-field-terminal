@@ -84,6 +84,9 @@ class WeatherManager {
   void run();
   void poll(uint32_t nowMs);
   void geocode();
+  bool resolveIdentity(Snapshot& next, double latitude, double longitude);
+  void persistIdentity(const Snapshot& next);
+  void persistResolvedIdentity(const Snapshot& next);
   void publish(const Snapshot& next);
   bool persist(LocationSource source, double latitude, double longitude,
                const char* city, const char* region, const char* country,

@@ -67,6 +67,28 @@ class HardwareResponsivenessPassTests(unittest.TestCase):
         self.assertNotRegex(TOUCH, r"while\s*\([^)]*Wire")
         self.assertLessEqual(SPEC["touch"]["clean_release_ms"], 200)
         self.assertLessEqual(SPEC["touch"]["post_refresh_quiet_ms"], 200)
+        capture = TOUCH[TOUCH.index("void TouchController::captureTask()"):
+                        TOUCH.index("bool TouchController::beginDisplayCapture")]
+        self.assertIn("queuedAction_=action", capture)
+        self.assertIn("queuedActionPending_=true", capture)
+        self.assertNotRegex(TOUCH_H, r"vector|deque|list<|xQueue")
+
+    def test_touch_routes_before_services_polling_and_cosmetic_rendering(self):
+        loop = MAIN[MAIN.index("void loop()") :]
+        route = loop.index("action.type == input::ActionType::Tap")
+        for later in ("gpsManager.poll(now)", "wifiManager.poll(now",
+                      "batteryManager.poll(now", "displayCoordinator.dirty()"):
+            self.assertLess(route, loop.index(later), later)
+
+    def test_age_countdowns_do_not_dirty_but_material_telemetry_does(self):
+        state = STATE
+        self.assertNotIn("nextPollSeconds", state)
+        self.assertNotIn("manualRefreshRemainingSeconds", state)
+        for material in ("telemetry.fetchState", "telemetry.systemStatus",
+                         "telemetry.cpuLoad", "telemetry.ramPercent"):
+            self.assertIn(material, state)
+        self.assertIn("materiallyDifferent(snapshot_, snapshot)", CONTROLLER)
+        self.assertIn("requestRender(RenderPriority::Cosmetic)", CONTROLLER)
 
     def test_performance_diagnostics_are_compile_time_gated_and_bounded(self):
         self.assertIn("#define SUPPORTFORGE_PERF_DIAGNOSTICS 0", MAIN)
@@ -89,7 +111,9 @@ class HardwareResponsivenessPassTests(unittest.TestCase):
         self.assertIn("kGaugeAddress = 0x55", BATTERY)
         self.assertIn("kStateOfChargeRegister = 0x2C", BATTERY)
         self.assertIn("decodeLittleEndianWord(first[0], first[1])", BATTERY)
-        self.assertIn("firstValue != secondValue", BATTERY)
+        self.assertIn("uint8_t first[2]{}, second[2]{}, third[2]{}", BATTERY)
+        self.assertIn("thirdValue == secondValue || thirdValue == firstValue", BATTERY)
+        self.assertIn("retainedPercentFresh", BATTERY)
         self.assertIn("kChargerAddress = 0x6B", BATTERY)
         self.assertIn("kChargerStatusRegister = 0x0B", BATTERY)
         self.assertIn("kChargeStatusMask = 0x18", BATTERY)
@@ -102,7 +126,8 @@ class HardwareResponsivenessPassTests(unittest.TestCase):
         self.assertIn("text(fb, unfilled, labelX", icon)
         self.assertIn("state == battery::State::Charging", icon)
         self.assertIn("void batteryDetail", PAGES)
-        self.assertIn('"SOC SOURCE",s.batterySampleValid?"BQ27220 SOC READ":"UNAVAILABLE"', PAGES)
+        self.assertIn('"BQ27220 LAST KNOWN"', PAGES)
+        self.assertIn('"SOC SOURCE",socSource', PAGES)
 
     def test_unverified_physical_controls_are_not_exposed(self):
         # Retained current-Pro EPD source assigns IO48 to CKV, so it cannot be

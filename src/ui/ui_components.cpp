@@ -29,25 +29,6 @@ void line(uint8_t* fb, int x1, int y1, int x2, int y2, uint8_t color) {
   epd_draw_line(x1, y1, x2, y2, color, fb);
 }
 
-void globalRefreshControlImpl(uint8_t* fb) {
-  epd_fill_rect({kGlobalRefreshAction.x,kGlobalRefreshAction.y,
-                 kGlobalRefreshAction.w,kGlobalRefreshAction.h},kPaper,fb);
-  roundedRect(fb,kGlobalRefreshAction,8,kPaper,kInk);
-  const String label="REFRESH";
-  const int labelX=kGlobalRefreshAction.x+
-      (kGlobalRefreshAction.w-textWidth(label,FontRole::Navigation))/2;
-  // Circular-arrow utility glyph, deliberately static for e-paper.
-  epd_draw_circle(kGlobalRefreshAction.x+kGlobalRefreshAction.w/2,
-                  kGlobalRefreshAction.y+36,15,kInk,fb);
-  line(fb,kGlobalRefreshAction.x+61,kGlobalRefreshAction.y+22,
-       kGlobalRefreshAction.x+66,kGlobalRefreshAction.y+35,kInk);
-  line(fb,kGlobalRefreshAction.x+61,kGlobalRefreshAction.y+22,
-       kGlobalRefreshAction.x+48,kGlobalRefreshAction.y+25,kInk);
-  text(fb,{kGlobalRefreshAction.x+3,kGlobalRefreshAction.y+56,
-           kGlobalRefreshAction.w-6,36},max(kGlobalRefreshAction.x+3,labelX),
-       kGlobalRefreshAction.y+80,label,FontRole::Navigation,kInk);
-}
-
 int glyphIndex(char raw) {
   const unsigned char c = static_cast<unsigned char>(raw);
   return c >= 32 && c <= 126 ? c - 32 : '?' - 32;
@@ -58,8 +39,6 @@ bool inClip(const Rect& clip, int x, int y) {
 }
 
 }  // namespace
-
-void globalRefreshControl(uint8_t* fb) { globalRefreshControlImpl(fb); }
 
 void clear(uint8_t* fb) { epd_fill_rect({0, 0, kCanvasWidth, kCanvasHeight}, kPaper, fb); }
 
@@ -103,6 +82,30 @@ String fittedText(const String& value, FontRole role, int width) {
 int centeredBaseline(Rect bounds, FontRole role) {
   const fonts::Font& font = fontFor(role);
   return bounds.y + (bounds.h + font.ascent - font.descent) / 2;
+}
+
+void actionButton(uint8_t* fb, Rect bounds, const String& label, bool selected) {
+  constexpr int kHorizontalPadding = 16;
+  constexpr int kVerticalPadding = 10;
+  static_assert(kVerticalPadding >= 8, "action labels require safe vertical padding");
+  // Buttons are dynamic regions: erase the complete visual bounds first so a
+  // shorter replacement label or inverse-state transition cannot retain ink.
+  epd_fill_rect({bounds.x, bounds.y, bounds.w, bounds.h}, kPaper, fb);
+  roundedRect(fb, bounds, 10, selected ? kInk : kPaper, kInk);
+  const Rect content{bounds.x + kHorizontalPadding, bounds.y + kVerticalPadding,
+                     bounds.w - 2 * kHorizontalPadding,
+                     bounds.h - 2 * kVerticalPadding};
+  const FontRole role = textFits(label, FontRole::CardHeading, content)
+                            ? FontRole::CardHeading
+                            : FontRole::Body;
+  const String shown = fittedText(label, role, content.w);
+  const int x = content.x + (content.w - textWidth(shown, role)) / 2;
+  // Center the font's ascent/descent box inside the same inset rectangle used
+  // for clipping. The former implementation centered against the outer button
+  // but clipped against an inset rectangle, which could remove descenders or
+  // the top row after generated-font metric changes.
+  text(fb, content, x, centeredBaseline(content, role), shown, role,
+       selected ? kPaper : kInk);
 }
 
 void text(uint8_t* fb, Rect clip, int x, int baseline, const String& value, FontRole role, uint8_t color) {
@@ -155,6 +158,9 @@ void icon(uint8_t* fb, Icon value, int cx, int cy, int s, uint8_t color) {
       epd_draw_rect({cx-h,cy-h,s,s},color,fb); epd_fill_circle(cx,cy,3,color,fb); break;
     case Icon::Battery:
       epd_draw_rect({cx-h,cy-h/2,s-3,h},color,fb); epd_fill_rect({cx+h-2,cy-3,3,6},color,fb); break;
+    case Icon::Wifi:
+      epd_draw_circle(cx,cy+8,h,color,fb); epd_draw_circle(cx,cy+8,h*2/3,color,fb);
+      epd_draw_circle(cx,cy+8,h/3,color,fb); epd_fill_circle(cx,cy+8,3,color,fb); break;
     case Icon::Lock:
       epd_draw_rect({cx-h/2,cy,s/2,h/2},color,fb); epd_draw_circle(cx,cy,h/2,color,fb); break;
     case Icon::Check:
@@ -179,7 +185,8 @@ void batteryIcon(uint8_t* fb, Rect bounds, battery::State state,
   if (!percentAvailable || !battery::validPercent(percent)) {
     const String unknown = "--";
     const int x = interior.x + (interior.w - textWidth(unknown, FontRole::Caption)) / 2;
-    text(fb, interior, x, interior.y + 16, unknown, FontRole::Caption, kInk);
+    text(fb, interior, x, centeredBaseline(interior, FontRole::Caption),
+         unknown, FontRole::Caption, kInk);
     return;
   }
   const uint8_t bounded = min<uint8_t>(percent, 100);
@@ -192,11 +199,11 @@ void batteryIcon(uint8_t* fb, Rect bounds, battery::State state,
   const String label = String(bounded);
   const int labelWidth = textWidth(label, FontRole::Caption);
   const int labelX = interior.x + (interior.w - labelWidth) / 2;
-  const int labelBaseline = interior.y + 16;
+  const int labelBaseline = centeredBaseline(interior, FontRole::Caption);
   if (filled.w > 0) text(fb, filled, labelX, labelBaseline, label, FontRole::Caption, kPaper);
   if (unfilled.w > 0) text(fb, unfilled, labelX, labelBaseline, label, FontRole::Caption, kInk);
 
-  if (state == battery::State::Charging) {
+  if (state == battery::State::Charging || state == battery::State::Verifying) {
     // Static two-tone lightning remains visible over either black fill or white.
     const int cx = body.x + body.w - 8;
     for (int offset=-1;offset<=1;++offset) {
@@ -214,27 +221,59 @@ void circle(uint8_t* fb, int cx, int cy, int radius, uint8_t color) {
   epd_draw_circle(cx, cy, radius, color, fb);
 }
 
+void wifiIcon(uint8_t* fb, Rect bounds, network::State state,
+              bool rssiAvailable, int16_t rssi, uint8_t color) {
+  epd_fill_rect({bounds.x,bounds.y,bounds.w,bounds.h},kPaper,fb);
+  constexpr int kBarCount=4,kBarWidth=4,kBarGap=3;
+  const int totalWidth=kBarCount*kBarWidth+(kBarCount-1)*kBarGap;
+  const int left=bounds.x+(bounds.w-totalWidth)/2,bottom=spec::kHeaderBaseline+2;
+  int bars=0;
+  if(state==network::State::Connected&&rssiAvailable){
+    bars=rssi>=-55?4:(rssi>=-67?3:(rssi>=-78?2:1));
+  }else if(state==network::State::Connected){
+    bars=4;
+  }else if(state==network::State::Connecting){
+    bars=1;
+  }
+  // Compact phone-style strength bars share one flat bottom. Unfilled bars use
+  // dark outlines rather than pale pixels, so every state remains crisp in GC16.
+  for(int index=0;index<kBarCount;++index){
+    const int height=7+index*5;
+    const Rect bar{left+index*(kBarWidth+kBarGap),bottom-height,kBarWidth,height};
+    if(index<bars)epd_fill_rect({bar.x,bar.y,bar.w,bar.h},color,fb);
+    else epd_draw_rect({bar.x,bar.y,bar.w,bar.h},color,fb);
+  }
+}
+
 void appBar(uint8_t* fb, const UiSnapshot& state, const char* section) {
   const Rect brandClip = contractRect(spec::kHeaderBrandBounds);
   const Rect clockClip = contractRect(spec::kHeaderClockBounds);
+  const Rect dateClip = contractRect(spec::kHeaderDateBounds);
+  const Rect wifiClip = contractRect(spec::kHeaderWifiBounds);
   const Rect batteryClip = contractRect(spec::kHeaderBatteryBounds);
   static_assert(spec::kHeaderBrandBounds[0] + spec::kHeaderBrandBounds[2] <=
                     spec::kHeaderClockBounds[0], "brand and clock regions overlap");
   static_assert(spec::kHeaderClockBounds[0] + spec::kHeaderClockBounds[2] <=
-                    spec::kHeaderBatteryBounds[0], "clock and battery regions overlap");
+                    spec::kHeaderDateBounds[0], "clock and date regions overlap");
+  static_assert(spec::kHeaderDateBounds[0] + spec::kHeaderDateBounds[2] <=
+                    spec::kHeaderWifiBounds[0], "time/date and Wi-Fi regions overlap");
+  static_assert(spec::kHeaderWifiBounds[0] + spec::kHeaderWifiBounds[2] <=
+                    spec::kHeaderBatteryBounds[0], "Wi-Fi and battery regions overlap");
+  static_assert(spec::kHeaderBrandBounds[1] <= spec::kHeaderBaseline &&
+                    spec::kHeaderBaseline < spec::kHeaderBrandBounds[1] + spec::kHeaderBrandBounds[3],
+                "shared header baseline must remain inside the single row");
   // Clear every independently clipped region before drawing it. The rest of the
   // app bar is already white from full-frame composition; no dark header band is used.
   epd_fill_rect({brandClip.x,brandClip.y,brandClip.w,brandClip.h},kPaper,fb);
   epd_fill_rect({clockClip.x,clockClip.y,clockClip.w,clockClip.h},kPaper,fb);
+  epd_fill_rect({dateClip.x,dateClip.y,dateClip.w,dateClip.h},kPaper,fb);
+  epd_fill_rect({wifiClip.x,wifiClip.y,wifiClip.w,wifiClip.h},kPaper,fb);
   epd_fill_rect({batteryClip.x,batteryClip.y,batteryClip.w,batteryClip.h},kPaper,fb);
-  const int brandBaseline = brandClip.y + fonts::kBrand.ascent;
-  text(fb,brandClip,brandClip.x,brandBaseline,"supportFORGE",FontRole::Brand,kInk);
-  // Keep the stable product identity phone-like; page titles belong to content.
-  const int subtitleBaseline = brandClip.y + 64;
+  text(fb,brandClip,brandClip.x,spec::kHeaderBaseline,
+       "supportFORGE",FontRole::CardHeading,kInk);
+  // Page titles and product metadata belong to content rather than consuming
+  // permanent status-bar space on every screen.
   (void)section;
-  const String subtitle="FIELD TERMINAL";
-  text(fb,brandClip,brandClip.x,subtitleBaseline,
-       fittedText(subtitle,FontRole::Body,brandClip.w),FontRole::Body,kInkMuted);
   String time = "--:--";
   if (state.rtcValid) {
     uint8_t shownHour = state.hour;
@@ -247,35 +286,59 @@ void appBar(uint8_t* fb, const UiSnapshot& state, const char* section) {
     time = String((state.use24Hour && shownHour < 10) ? "0" : "") + shownHour + ":" +
            (state.minute < 10 ? "0" : "") + state.minute + suffix;
   }
-  const int timeX = clockClip.x + clockClip.w - textWidth(time,FontRole::CardHeading);
-  text(fb,clockClip,max(clockClip.x,timeX),clockClip.y+27,time,FontRole::CardHeading,kInk);
-  String date = state.rtcValid ? String(state.year) + "-" +
-      (state.month < 10 ? "0" : "") + state.month + "-" +
-      (state.day < 10 ? "0" : "") + state.day : "TIME SYNC";
-  const int dateX = clockClip.x + clockClip.w - textWidth(date,FontRole::Caption);
-  text(fb,clockClip,max(clockClip.x,dateX),clockClip.y+63,date,FontRole::Caption,kInkMuted);
-  const Rect batteryGlyph{batteryClip.x+2,batteryClip.y+8,62,28};
+  static const char* months[]={"JAN","FEB","MAR","APR","MAY","JUN",
+                               "JUL","AUG","SEP","OCT","NOV","DEC"};
+  const String date=state.rtcValid&&state.month>=1&&state.month<=12?
+      String(months[state.month-1])+" "+String(state.day):"TIME SYNC";
+  // Time is the dominant status value. Date remains a smaller adjacent cell in
+  // the same row, so no hidden secondary text can survive below it.
+  const int clockX=clockClip.x+(clockClip.w-textWidth(time,FontRole::CardHeading))/2;
+  text(fb,clockClip,max(clockClip.x,clockX),spec::kHeaderBaseline,
+       fittedText(time,FontRole::CardHeading,clockClip.w),FontRole::CardHeading,kInk);
+  const int dateX=dateClip.x+(dateClip.w-textWidth(date,FontRole::Caption))/2;
+  text(fb,dateClip,max(dateClip.x,dateX),spec::kHeaderBaseline,
+       date,FontRole::Caption,kInk);
+  wifiIcon(fb,wifiClip,state.wifi.state,state.wifi.rssiAvailable,state.wifi.rssi,kInk);
+  // Keep state text separate from the compact far-right icon. LKG identifies a
+  // retained validated SOC; ERR/-- never masquerade as a percentage.
+  const Rect batteryGlyph{batteryClip.x+56,spec::kHeaderBaseline-25,80,32};
   batteryIcon(fb,batteryGlyph,state.batteryState,state.batteryPercentAvailable,
               state.batteryPercent,kInk);
-  const String battery = state.batteryState == battery::State::Charging ? "CHG" :
-      (state.batteryState == battery::State::Full ? "FULL" :
-       (state.batteryPercentAvailable ? "%" : "--"));
-  const int batteryX = batteryClip.x + (batteryClip.w-textWidth(battery,FontRole::Caption))/2;
-  text(fb,batteryClip,max(batteryClip.x,batteryX),batteryClip.y+64,battery,FontRole::Caption,kInkMuted);
+  String batteryStateLabel;
+  if(state.batteryState==battery::State::Full)batteryStateLabel="FULL";
+  else if(state.batteryState==battery::State::Verifying)batteryStateLabel="VERIFY";
+  else if(state.batteryState==battery::State::Stale)batteryStateLabel="LKG";
+  else if(state.batteryState==battery::State::Error)batteryStateLabel="ERR";
+  if(batteryStateLabel.length()){
+    const Rect stateClip{batteryClip.x,batteryClip.y,52,batteryClip.h};
+    text(fb,stateClip,stateClip.x,spec::kHeaderBaseline,
+         batteryStateLabel,FontRole::Caption,kInk);
+  }
+  // Erase the complete old-to-new divider band before placing the raised rule.
+  // This remains correct if the app bar is ever redrawn from retained pixels.
+  epd_fill_rect({0,kAppBarHeight-1,kCanvasWidth,9},kPaper,fb);
   epd_draw_hline(0,kAppBarHeight-1,kCanvasWidth,kRule,fb);
 }
 
 void card(uint8_t* fb, Rect b, const char* eyebrow, const String& title, const String& body) {
-  roundedRect(fb,b,12,kSurfaceSoft,kRule);
-  const Rect clip{b.x+18,b.y+12,b.w-36,b.h-24};
+  roundedRect(fb,b,12,kPaper,kInk);
+  const int stripHeight=min(38,b.h/3);
+  epd_fill_rect({b.x+2,b.y+2,b.w-4,stripHeight},kInk,fb);
+  const Rect clip{b.x+18,b.y+stripHeight+6,b.w-36,b.h-stripHeight-14};
   const bool compact = b.h < 100;
-  text(fb,clip,clip.x,b.y+(compact?25:31),eyebrow,FontRole::Caption,kInkMuted);
+  text(fb,{b.x+14,b.y+2,b.w-28,stripHeight},b.x+14,
+       centeredBaseline({b.x+14,b.y+2,b.w-28,stripHeight},FontRole::Caption),
+       eyebrow,FontRole::Caption,kPaper);
   const FontRole titleRole = compact ? FontRole::CardHeading : FontRole::PageHeading;
-  const int titleBaseline = b.y + (compact ? 53 : 61);
-  text(fb,clip,clip.x,titleBaseline,fittedText(title,titleRole,clip.w),titleRole,kInk);
-  if (body.length() && b.h >= 92) {
-    const FontRole bodyRole = compact ? FontRole::Caption : FontRole::Body;
-    text(fb,clip,clip.x,b.y+(compact?78:91),fittedText(body,bodyRole,clip.w),bodyRole,kInkMuted);
+  const FontRole bodyRole = compact ? FontRole::Caption : FontRole::Body;
+  const Rect titleRegion{clip.x,clip.y,clip.w,min(clip.h,textHeight(titleRole))};
+  text(fb,titleRegion,titleRegion.x,centeredBaseline(titleRegion,titleRole),
+       fittedText(title,titleRole,titleRegion.w),titleRole,kInk);
+  const int bodyY=titleRegion.y+titleRegion.h+4;
+  const Rect bodyRegion{clip.x,bodyY,clip.w,max(0,clip.y+clip.h-bodyY)};
+  if (body.length() && bodyRegion.h >= textHeight(bodyRole)) {
+    text(fb,bodyRegion,bodyRegion.x,centeredBaseline(bodyRegion,bodyRole),
+         fittedText(body,bodyRole,bodyRegion.w),bodyRole,kInkMuted);
   }
 }
 
@@ -287,11 +350,20 @@ void statusPill(uint8_t* fb, Rect b, const String& label, bool dark) {
 }
 
 void metricTile(uint8_t* fb, Rect b, Icon glyph, const char* label, const String& value, const String& detail) {
-  roundedRect(fb,b,10,kPaper,kRule); icon(fb,glyph,b.x+28,b.y+28,22,kInk);
-  const Rect clip{b.x+14,b.y+8,b.w-28,b.h-16};
-  text(fb,clip,b.x+48,b.y+31,label,FontRole::Caption,kInkMuted);
-  text(fb,clip,b.x+16,b.y+67,fittedText(value,FontRole::CardHeading,clip.w-2),FontRole::CardHeading,kInk);
-  if (detail.length()) text(fb,clip,b.x+16,b.y+94,fittedText(detail,FontRole::Caption,clip.w-2),FontRole::Caption,kInkMuted);
+  roundedRect(fb,b,10,kPaper,kInk);
+  epd_fill_rect({b.x+2,b.y+2,b.w-4,34},kInk,fb);
+  icon(fb,glyph,b.x+21,b.y+19,18,kPaper);
+  text(fb,{b.x+38,b.y+2,b.w-48,34},b.x+38,centeredBaseline({b.x+38,b.y+2,b.w-48,34},FontRole::Caption),label,FontRole::Caption,kPaper);
+  const Rect clip{b.x+14,b.y+40,b.w-28,b.h-48};
+  const Rect valueRegion{clip.x+2,clip.y,clip.w-2,min(clip.h,textHeight(FontRole::CardHeading))};
+  text(fb,valueRegion,valueRegion.x,centeredBaseline(valueRegion,FontRole::CardHeading),
+       fittedText(value,FontRole::CardHeading,valueRegion.w),FontRole::CardHeading,kInk);
+  const int detailY=valueRegion.y+valueRegion.h+4;
+  const Rect detailRegion{clip.x+2,detailY,clip.w-2,max(0,clip.y+clip.h-detailY)};
+  if (detail.length() && detailRegion.h >= textHeight(FontRole::Caption)) {
+    text(fb,detailRegion,detailRegion.x,centeredBaseline(detailRegion,FontRole::Caption),
+         fittedText(detail,FontRole::Caption,detailRegion.w),FontRole::Caption,kInkMuted);
+  }
 }
 
 void labeledRow(uint8_t* fb, Rect b, const char* label, const String& value, bool divider) {
@@ -321,20 +393,24 @@ void dialog(uint8_t* fb, Rect b, const String& title, const String& body,
   const Rect clip{b.x+24,b.y+20,b.w-48,b.h-40};
   text(fb,clip,clip.x,b.y+54,title,FontRole::PageHeading,kInk);
   text(fb,clip,clip.x,b.y+92,body,FontRole::Body,kInkMuted);
-  const Rect action{b.x + 24, b.y + b.h - 76, b.w - 48, 52};
-  roundedRect(fb, action, 10, kInk, kInk);
-  text(fb,{action.x+12,action.y,action.w-24,action.h},
-       action.x+max(12,(action.w-textWidth(actionLabel,FontRole::Body))/2),action.y+33,
-       actionLabel,FontRole::Body,kPaper);
+  constexpr int kDialogActionHeight = 56;
+  constexpr int kDialogBottomPadding = 24;
+  static_assert(kDialogActionHeight >= spec::kMinimumTouchTarget,
+                "dialog action must meet the minimum touch target");
+  const Rect action{b.x + 24, b.y + b.h - kDialogBottomPadding - kDialogActionHeight,
+                    b.w - 48, kDialogActionHeight};
+  actionButton(fb, action, actionLabel, true);
 }
 
 Rect navigationTarget(Page page) {
   int index=0;
-  switch(page){case Page::Home:case Page::SystemHealth:case Page::SystemMetrics:case Page::Storage:case Page::Network:case Page::WeatherDetail:case Page::VehicleMotion:case Page::Altimeter:index=0;break;case Page::Systems:index=1;break;case Page::Radio:index=2;break;case Page::Location:index=3;break;case Page::Device:case Page::Diagnostics:case Page::DisplayCalibration:case Page::TextQualification:case Page::Settings:case Page::TouchSetup:case Page::DisplayRefreshConfirm:case Page::Battery:case Page::TimezoneSetup:case Page::LowPowerSetup:case Page::LowPowerStatus:case Page::DisplayRefreshMode:case Page::TouchRecalibrateConfirm:index=4;break;case Page::WeatherSetup:index=0;break;}
+  switch(page){case Page::Home:case Page::SystemHealth:case Page::SystemMetrics:case Page::Storage:case Page::Network:case Page::WeatherDetail:case Page::VehicleMotion:case Page::Altimeter:index=0;break;case Page::Systems:index=1;break;case Page::Radio:index=2;break;case Page::Location:index=3;break;case Page::Device:case Page::Diagnostics:case Page::DisplayCalibration:case Page::TextQualification:case Page::Settings:case Page::TouchSetup:case Page::Battery:case Page::TimezoneSetup:case Page::LowPowerSetup:case Page::LowPowerStatus:case Page::DisplayRefreshMode:case Page::TouchRecalibrateConfirm:case Page::DateTimeSettings:case Page::UnitsSettings:case Page::LocationPrivacySettings:case Page::WifiSettings:case Page::WifiNetworks:case Page::WifiEntry:case Page::WifiForgetConfirm:case Page::Calculator:index=4;break;case Page::WeatherSetup:index=0;break;}
   return {index*spec::kNavItemWidth,kContentBottom,spec::kNavItemWidth,kNavHeight};
 }
 
 void bottomNavigation(uint8_t* fb, Page selected) {
+  static_assert(5*spec::kNavItemWidth==kCanvasWidth,
+                "five equal navigation tiles must span the full canvas");
   epd_fill_rect({0,kContentBottom,kCanvasWidth,kNavHeight},kPaper,fb);
   epd_fill_rect({0,kContentBottom,kCanvasWidth,3},kInk,fb);
   const Icon icons[]={Icon::Home,Icon::Systems,Icon::Radio,Icon::Location,Icon::Device};
@@ -351,7 +427,6 @@ void bottomNavigation(uint8_t* fb, Page selected) {
     text(fb,{target.x+3,kContentBottom+54,target.w-6,39},x,kContentBottom+80,
          labels[i],FontRole::Navigation,active?kPaper:kInk);
   }
-  globalRefreshControlImpl(fb);
 }
 
 }  // namespace ui

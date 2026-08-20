@@ -31,6 +31,7 @@ class DisplayCoordinator {
   bool cleanupUsed() const { return fullClearUsed_; }
   bool whiteTestUsed() const { return whiteTestUsed_; }
   bool manualRefreshAvailable(uint32_t nowMs) const;
+  uint32_t manualRefreshRemainingSeconds(uint32_t nowMs) const;
   RefreshMode refreshMode() const { return refreshMode_; }
   bool setRefreshMode(RefreshMode mode);
   void noteTouchAction(uint32_t actionReadyMs, uint32_t handledMs);

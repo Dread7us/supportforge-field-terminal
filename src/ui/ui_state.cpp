@@ -37,7 +37,6 @@ const char* pageName(Page page) {
     case Page::TouchSetup: return "TOUCH SETUP";
     case Page::TouchRecalibrateConfirm: return "RECALIBRATE TOUCH";
     case Page::WeatherSetup: return "WEATHER SETUP";
-    case Page::DisplayRefreshConfirm: return "REFRESH DISPLAY";
     case Page::SystemHealth: return "SYSTEM HEALTH";
     case Page::SystemMetrics: return "SYSTEM METRICS";
     case Page::Storage: return "STORAGE";
@@ -50,6 +49,14 @@ const char* pageName(Page page) {
     case Page::LowPowerSetup: return "LOW POWER MODE";
     case Page::LowPowerStatus: return "LOW POWER STATUS";
     case Page::DisplayRefreshMode: return "DISPLAY REFRESH MODE";
+    case Page::DateTimeSettings: return "DATE & TIME";
+    case Page::UnitsSettings: return "UNITS";
+    case Page::LocationPrivacySettings: return "LOCATION & PRIVACY";
+    case Page::WifiSettings: return "WI-FI";
+    case Page::WifiNetworks: return "WI-FI NETWORKS";
+    case Page::WifiEntry: return "WI-FI ENTRY";
+    case Page::WifiForgetConfirm: return "FORGET WI-FI";
+    case Page::Calculator: return "CALCULATOR";
   }
   return "HOME";
 }
@@ -119,6 +126,13 @@ bool materiallyDifferent(const UiSnapshot& a, const UiSnapshot& b) {
         a.weather.weatherCode != b.weather.weatherCode)) ||
        a.location.version != b.location.version ||
        a.lowPower.version != b.lowPower.version ||
+       a.wifi.version != b.wifi.version ||
+       strcmp(a.wifiEntrySsid, b.wifiEntrySsid) ||
+       a.wifiPasswordLength != b.wifiPasswordLength ||
+       a.wifiEditingPassword != b.wifiEditingPassword ||
+       a.wifiKeyboardPage != b.wifiKeyboardPage ||
+       strcmp(a.calculatorDisplay, b.calculatorDisplay) ||
+       a.calculatorError != b.calculatorError ||
        a.manualRefreshRateLimited != b.manualRefreshRateLimited ||
        a.refreshMode != b.refreshMode ||
        a.weatherWizard.active != b.weatherWizard.active ||

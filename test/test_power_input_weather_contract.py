@@ -20,6 +20,8 @@ PAGES = text("src/ui/ui_pages.cpp")
 COMPONENTS = text("src/ui/ui_components.cpp")
 DISPLAY = text("src/ui/ui_controller.cpp")
 TOUCH = text("src/input/touch_controller.cpp")
+WIFI = text("src/network/wifi_manager.cpp")
+TELEMETRY = text("src/telemetry/telemetry_manager.cpp")
 
 
 class PowerInputWeatherContractTests(unittest.TestCase):
@@ -59,7 +61,11 @@ class PowerInputWeatherContractTests(unittest.TestCase):
         self.assertIn("telemetryManager.setSuspended(!servicesAwake)", MAIN)
         self.assertIn("weatherManager.setSuspended(!servicesAwake)", MAIN)
         self.assertIn("telemetryManager.idle() && weatherManager.idle()", MAIN)
-        self.assertIn("WiFi.mode(WIFI_OFF)", MAIN)
+        self.assertIn("wifiManager.setServicesAllowed(servicesAwake)", MAIN)
+        self.assertIn("WiFi.mode(WIFI_OFF)", WIFI)
+        self.assertIn("WiFi.disconnect(true, false)", WIFI)
+        self.assertNotIn("WiFi.disconnect", TELEMETRY)
+        self.assertNotIn("WiFi.begin", TELEMETRY)
         self.assertIn("radio.sleep()", MAIN)
         self.assertNotRegex(MAIN + LOW_POWER, r"esp_deep_sleep|deep.?sleep")
 

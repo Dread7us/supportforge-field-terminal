@@ -24,6 +24,8 @@
 #include "ui/ui_controller.h"
 #include "weather/weather_manager.h"
 #include "weather/weather_wizard.h"
+#include "network/wifi_manager.h"
+#include "utilities/calculator.h"
 
 // UiSnapshot intentionally contains bounded Guardian, weather, time, and
 // hardware state. Give Arduino's loop task enough stack for those value
@@ -49,9 +51,10 @@ bool gpsFixObserved = false;
 bool radioObserved = false;
 
 constexpr const char *kFirmwareId = "UI QUAL 3";
-// Increment only when a display layout/render-schema change genuinely requires
-// one physical panel cleanup. Matching revisions take the fast normal-boot path.
-constexpr uint32_t kDisplayCleanupRevision = 10;
+// Revision is retained as audit metadata, but panel history survives MCU resets
+// independently of NVS. Every boot therefore performs one bounded physical
+// cleanup before the first usable render; matching metadata must never suppress it.
+constexpr uint32_t kDisplayCleanupRevision = 11;
 Preferences bootPreferences;
 bool bootCleanupPending = false;
 ui::DisplayCoordinator displayCoordinator;
@@ -63,9 +66,14 @@ weather::WeatherManager weatherManager;
 power::LowPowerManager lowPowerManager;
 location::GpsManager gpsManager(gpsSerial);
 weather::WeatherWizard weatherWizard;
+network::WifiManager wifiManager;
+utilities::Calculator calculator;
+bool wifiEditingPassword = false;
+uint8_t wifiKeyboardPage = 0;
 ui::Page weatherWizardReturnPage = ui::Page::Home;
-ui::Page manualRefreshReturnPage = ui::Page::Device;
 ui::Page detailReturnPage = ui::Page::Home;
+ui::Page timezoneReturnPage = ui::Page::Settings;
+ui::Page wifiReturnPage = ui::Page::Settings;
 uint8_t systemsSection = 0;
 uint32_t observedTelemetryVersion = 0;
 uint32_t observedTimeVersion = 0;
@@ -73,6 +81,7 @@ uint32_t observedWeatherVersion = 0;
 uint32_t observedBatteryVersion = 0;
 uint32_t observedGpsVersion = 0;
 uint32_t observedLowPowerVersion = 0;
+uint32_t observedWifiVersion = 0;
 uint32_t nextPerformanceReportMs = 0;
 uint32_t firstScreenRenderedAtMs = 0;
 bool touchReadyReported = false;
@@ -130,9 +139,17 @@ ui::UiSnapshot makeUiSnapshot() {
   state.gpsSatellites = state.location.satellitesValid ? state.location.satellites : 0;
   state.configured = appconfig::configured();
   state.telemetry = telemetryManager.snapshot();
+  state.wifi = wifiManager.snapshot();
+  strlcpy(state.wifiEntrySsid,wifiManager.entrySsid(),sizeof(state.wifiEntrySsid));
+  state.wifiPasswordLength = static_cast<uint8_t>(wifiManager.passwordLength());
+  state.wifiEditingPassword = wifiEditingPassword;
+  state.wifiKeyboardPage = wifiKeyboardPage;
+  strlcpy(state.calculatorDisplay,calculator.display().c_str(),sizeof(state.calculatorDisplay));
+  state.calculatorError = calculator.error();
   state.nextPollSeconds = telemetryManager.nextPollInSeconds(millis());
   state.systemsSection = systemsSection;
   state.manualRefreshRateLimited = !displayCoordinator.manualRefreshAvailable(millis());
+  state.manualRefreshRemainingSeconds = displayCoordinator.manualRefreshRemainingSeconds(millis());
   state.refreshMode = displayCoordinator.refreshMode();
   state.displayGc16DurationMs = displayCoordinator.lastGc16DurationMs();
   state.displayCleanupDurationMs = displayCoordinator.lastFullCleanupDurationMs();
@@ -163,15 +180,8 @@ void applyLowPowerPolicy(uint32_t nowMs, const telemetry::Snapshot& telemetrySta
   const bool servicesAwake = !state.active || state.awakeWindow || state.criticalHold;
   telemetryManager.setSuspended(!servicesAwake);
   weatherManager.setSuspended(!servicesAwake);
-  if (servicesAwake) {
-    if (WiFi.getMode() == WIFI_OFF && appconfig::configured()) {
-      WiFi.mode(WIFI_STA);
-      WiFi.setAutoReconnect(false);
-    }
-  } else if (telemetryManager.idle() && weatherManager.idle() && WiFi.getMode() != WIFI_OFF) {
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-  }
+  if (servicesAwake || (telemetryManager.idle() && weatherManager.idle()))
+    wifiManager.setServicesAllowed(servicesAwake);
   if (state.active) {
     if (radioListening) {
       radio.sleep();
@@ -246,7 +256,7 @@ void printProfile() {
   } else {
     Serial.println("GPS: unavailable in this comparison profile; no pins guessed");
   }
-  Serial.println("Boot policy: direct usable-page GC16, revision-gated cleanup, background services, no RF transmit or GPS TX.");
+  Serial.println("Boot policy: one bounded every-boot panel cleanup before usable-page GC16, background services, no RF transmit or GPS TX.");
 }
 
 void printHelp() {
@@ -455,7 +465,7 @@ void testDisplay() {
   const bool cleanupRequested = bootCleanupPending && !displayCoordinator.cleanupUsed();
   const bool rendered = displayCoordinator.renderIfDirty(millis(), cleanupRequested);
   if(capturingTouch)touchController.endDisplayCapture();
-  if (rendered) touchController.notifyDisplayUpdateFinished(millis());
+  if (rendered && !capturingTouch) touchController.notifyDisplayUpdateFinished(millis());
   if (rendered && cleanupRequested && displayCoordinator.cleanupUsed()) {
     const size_t written = bootPreferences.putUInt("display_rev", kDisplayCleanupRevision);
     bootCleanupPending = written == 0;
@@ -498,6 +508,7 @@ void initializeLocalServices() {
   if (!lowPowerManager.begin(millis())) {
     printResult("low_power", "FAILED", "NVS preferences unavailable");
   }
+  wifiManager.begin();
   const power::Snapshot initialPower = lowPowerManager.snapshot();
   telemetryManager.setSuspended(initialPower.active && !initialPower.awakeWindow);
   weatherManager.setSuspended(initialPower.active && !initialPower.awakeWindow);
@@ -531,7 +542,6 @@ bool requestNamedPage(const String& name) {
   else if (name == "text qualification") page = ui::Page::TextQualification;
   else if (name == "settings") page = ui::Page::Settings;
   else if (name == "weather setup") page = ui::Page::WeatherSetup;
-  else if (name == "refresh display") page = ui::Page::DisplayRefreshConfirm;
   else if (name == "system health") page = ui::Page::SystemHealth;
   else if (name == "system metrics") page = ui::Page::SystemMetrics;
   else if (name == "storage") page = ui::Page::Storage;
@@ -563,7 +573,6 @@ bool namedPage(const String& name, ui::Page& page) {
   else if (name == "touch setup") page = ui::Page::TouchSetup;
   else if (name == "recalibrate touch") page = ui::Page::TouchRecalibrateConfirm;
   else if (name == "weather setup") page = ui::Page::WeatherSetup;
-  else if (name == "refresh display") page = ui::Page::DisplayRefreshConfirm;
   else if (name == "system health") page = ui::Page::SystemHealth;
   else if (name == "system metrics") page = ui::Page::SystemMetrics;
   else if (name == "storage") page = ui::Page::Storage;
@@ -599,7 +608,7 @@ void processCommand(String command) {
     const bool capturingTouch=touchController.beginDisplayCapture();
     const bool rendered=displayCoordinator.renderWhiteTest(millis());
     if(capturingTouch)touchController.endDisplayCapture();
-    if(rendered)touchController.notifyDisplayUpdateFinished(millis());
+    if(rendered&&!capturingTouch)touchController.notifyDisplayUpdateFinished(millis());
     printResult("display_white_test",rendered?"COMMAND_ACCEPTED":(displayCoordinator.whiteTestUsed()?"GUARD_BLOCKED":"FAILED"),
                 rendered?"white framebuffer, black border and identifier rendered once":"once-per-boot guard or display failure");
   }
@@ -656,15 +665,14 @@ void setup() {
   touchObserved = touchController.begin();
   if (bootPreferences.begin("sf_boot", false)) {
     const uint32_t storedRevision = bootPreferences.getUInt("display_rev", 0);
-    bootCleanupPending = storedRevision != kDisplayCleanupRevision;
-    Serial.printf("DISPLAY cleanup_revision stored=%lu required=%lu pending=%s policy=REVISION_ONLY changed=%s\n",
+    bootCleanupPending = true;
+    Serial.printf("DISPLAY cleanup_revision stored=%lu required=%lu pending=YES policy=EVERY_BOOT changed=%s\n",
                   static_cast<unsigned long>(storedRevision),
                   static_cast<unsigned long>(kDisplayCleanupRevision),
-                  bootCleanupPending ? "YES" : "NO",
                   storedRevision == kDisplayCleanupRevision ? "NO" : "YES");
   } else {
-    bootCleanupPending = false;
-    Serial.println("DISPLAY cleanup_revision storage=UNAVAILABLE pending=NO policy=SAFE_NORMAL_BOOT");
+    bootCleanupPending = true;
+    Serial.println("DISPLAY cleanup_revision storage=UNAVAILABLE pending=YES policy=EVERY_BOOT");
   }
   if (displayCoordinator.begin()) {
     ui::Page initialPage = ui::Page::Home;
@@ -681,8 +689,8 @@ void setup() {
                   ui::pageName(initialPage),
                   touchController.mappingVerified() ? "YES" : "NO");
     // Compose the usable destination directly from the full known-white buffer.
-    // renderIfDirty powers HV off before returning. Revision cleanup, when due,
-    // is folded into this same single GC16 render rather than adding a screen.
+    // renderIfDirty powers HV off before returning. The bounded every-boot panel
+    // cleanup is folded into this same first GC16 render rather than adding a screen.
     testDisplay();
     firstScreenRenderedAtMs = millis();
     const uint32_t firstScreenMs = millis() - bootStartedMs;
@@ -707,12 +715,13 @@ void setup() {
 void loop() {
   if (Serial.available()) processCommand(Serial.readStringUntil('\n'));
   const uint32_t now = millis();
-  const bool inputBlocked = displayCoordinator.inputBlocked(now);
+  const bool captureSettled=touchController.displayCaptureSettled();
+  const bool inputBlocked = displayCoordinator.inputBlocked(now) || !captureSettled;
   input::TouchAction action{input::ActionType::None,{0,0},"NONE"};
   // Preserve a captured in-refresh action through the post-update quiet gate;
   // consume it exactly once only when coordinator navigation can accept it.
-  const bool queuedAction=!inputBlocked&&touchController.takeQueuedAction(action);
-  if(!queuedAction)action=touchController.poll(now, inputBlocked);
+  const bool queuedAction=captureSettled&&!inputBlocked&&touchController.takeQueuedAction(action);
+  if(captureSettled&&!queuedAction)action=touchController.poll(now,inputBlocked);
   if (firstScreenRenderedAtMs && !touchReadyReported && !inputBlocked) {
     touchReadyReported = true;
     Serial.printf("PERF touch_accept_ready_after_first_render_ms=%lu gate_ms=%d\n",
@@ -743,16 +752,7 @@ void loop() {
   } else if (action.type == input::ActionType::Tap) {
     displayCoordinator.noteTouchAction(action.actionReadyMs, millis());
     ui::Page destination = displayCoordinator.page();
-    // The footer utility must outrank page-local hit maps and the adjacent nav.
-    if (displayCoordinator.page()!=ui::Page::DisplayRefreshConfirm &&
-        displayCoordinator.page()!=ui::Page::TouchSetup &&
-        ui::kGlobalRefreshAction.contains(action.point.x, action.point.y)) {
-      manualRefreshReturnPage=displayCoordinator.page();
-      syncUiState();
-      destination=ui::Page::DisplayRefreshConfirm;
-      Serial.printf("TOUCH action=SELECTED target=REFRESH_DISPLAY source=%s route=CONFIRMATION\n",
-                    ui::pageName(manualRefreshReturnPage));
-    } else if (displayCoordinator.page() == ui::Page::WeatherSetup) {
+    if (displayCoordinator.page() == ui::Page::WeatherSetup) {
       const weather::WizardSnapshot before=weatherWizard.snapshot();
       const weather::WizardResult result = weatherWizard.tap(
           {action.point.x, action.point.y, 1, 1}, gpsManager.snapshot(), weatherManager);
@@ -770,23 +770,6 @@ void loop() {
       if (destination != displayCoordinator.page()) displayCoordinator.requestPage(destination, millis());
       testDisplay();
       return;
-    } else if (displayCoordinator.page() == ui::Page::DisplayRefreshConfirm) {
-      if (ui::kRefreshCancelAction.contains(action.point.x, action.point.y)) {
-        destination = manualRefreshReturnPage;
-      } else if (ui::kRefreshConfirmAction.contains(action.point.x, action.point.y)) {
-        if (displayCoordinator.manualRefreshAvailable(now)) {
-          Serial.println("TOUCH action=SELECTED target=REFRESH_DISPLAY confirmation=DELIBERATE");
-          releaseSharedSpiForDisplay();
-          const bool capturingTouch=touchController.beginDisplayCapture();
-          const bool refreshed=displayCoordinator.manualFullRefresh(now,manualRefreshReturnPage);
-          if(capturingTouch)touchController.endDisplayCapture();
-          if(refreshed)touchController.notifyDisplayUpdateFinished(millis());
-          printResult("manual_display_refresh",refreshed?"COMPLETE":"FAILED",
-                      refreshed?"panel cleaned and current page restored; state preserved":"rate limit or display failure");
-          return;
-        }
-        syncUiState();displayCoordinator.forceDirty();testDisplay();return;
-      }
     } else if (displayCoordinator.page() == ui::Page::TouchRecalibrateConfirm) {
       if (ui::kTouchRecalibrateCancelAction.contains(action.point.x, action.point.y)) {
         destination = ui::Page::Settings;
@@ -803,10 +786,16 @@ void loop() {
                 displayCoordinator.page()==ui::Page::Battery ||
                 displayCoordinator.page()==ui::Page::VehicleMotion ||
                  displayCoordinator.page()==ui::Page::Altimeter ||
-                 displayCoordinator.page()==ui::Page::Settings)) {
+                 displayCoordinator.page()==ui::Page::Settings ||
+                 displayCoordinator.page()==ui::Page::DateTimeSettings ||
+                 displayCoordinator.page()==ui::Page::UnitsSettings ||
+                 displayCoordinator.page()==ui::Page::LocationPrivacySettings ||
+                 displayCoordinator.page()==ui::Page::Diagnostics)) {
       destination=detailReturnPage;
     } else if (ui::kHeaderBatteryAction.contains(action.point.x, action.point.y)) {
       detailReturnPage=displayCoordinator.page();destination=ui::Page::Battery;
+    } else if (ui::kHeaderWifiAction.contains(action.point.x, action.point.y)) {
+      wifiReturnPage=displayCoordinator.page();destination=ui::Page::WifiSettings;
     } else if (ui::kNavBounds.contains(action.point.x, action.point.y)) {
       const int index = action.point.x / ui::spec::kNavItemWidth;
       const ui::Page pages[] = {ui::Page::Home, ui::Page::Systems, ui::Page::Radio,
@@ -816,17 +805,88 @@ void loop() {
                ui::kDeviceBatteryAction.contains(action.point.x, action.point.y)) {
       detailReturnPage=ui::Page::Device;destination=ui::Page::Battery;
     } else if (displayCoordinator.page() == ui::Page::Device &&
+               ui::kDeviceWifiAction.contains(action.point.x, action.point.y)) {
+      wifiReturnPage=ui::Page::Device;destination=ui::Page::WifiSettings;
+    } else if (displayCoordinator.page() == ui::Page::Device &&
                ui::kDeviceDiagnosticsAction.contains(action.point.x, action.point.y)) {
-      destination = ui::Page::Diagnostics;
+      detailReturnPage=ui::Page::Device;destination = ui::Page::Diagnostics;
     } else if (displayCoordinator.page() == ui::Page::Device &&
                ui::kDeviceDisplayRefreshAction.contains(action.point.x, action.point.y)) {
-      manualRefreshReturnPage=ui::Page::Device;syncUiState();destination=ui::Page::DisplayRefreshConfirm;
+      if (displayCoordinator.manualRefreshAvailable(now)) {
+        Serial.println("TOUCH action=SELECTED target=CLEAN_DISPLAY immediate=YES");
+        releaseSharedSpiForDisplay();
+        const bool capturingTouch=touchController.beginDisplayCapture();
+        const bool refreshed=displayCoordinator.manualFullRefresh(now,ui::Page::Device);
+        if(capturingTouch)touchController.endDisplayCapture();
+        if(refreshed&&!capturingTouch)touchController.notifyDisplayUpdateFinished(millis());
+        printResult("manual_display_cleanup",refreshed?"COMPLETE":"FAILED",
+                    refreshed?"panel cleaned immediately; DEVICE state preserved":"display failure");
+        return;
+      }
+      syncUiState();displayCoordinator.forceDirty();testDisplay();return;
     } else if (displayCoordinator.page() == ui::Page::Device &&
-               ui::kDeviceTemperatureAction.contains(action.point.x, action.point.y)) {
-      telemetryManager.toggleTemperatureUnit();syncUiState();testDisplay();
+               ui::kDeviceLowPowerAction.contains(action.point.x, action.point.y)) {
+      detailReturnPage=ui::Page::Device;destination=ui::Page::LowPowerSetup;
     } else if (displayCoordinator.page() == ui::Page::Device &&
                ui::kDeviceSettingsAction.contains(action.point.x, action.point.y)) {
       detailReturnPage=ui::Page::Device;destination=ui::Page::Settings;
+    } else if (displayCoordinator.page() == ui::Page::Settings && ui::kSettingsCategoryActions[0].contains(action.point.x,action.point.y)) {wifiReturnPage=ui::Page::Settings;destination=ui::Page::WifiSettings;}
+    else if (displayCoordinator.page() == ui::Page::Settings && ui::kSettingsCategoryActions[1].contains(action.point.x,action.point.y)) destination=ui::Page::DateTimeSettings;
+    else if (displayCoordinator.page() == ui::Page::Settings && ui::kSettingsCategoryActions[2].contains(action.point.x,action.point.y)) destination=ui::Page::DisplayRefreshMode;
+    else if (displayCoordinator.page() == ui::Page::Settings && ui::kSettingsCategoryActions[3].contains(action.point.x,action.point.y)) destination=ui::Page::UnitsSettings;
+    else if (displayCoordinator.page() == ui::Page::Settings && ui::kSettingsCategoryActions[4].contains(action.point.x,action.point.y)){weatherWizardReturnPage=ui::Page::Settings;weatherWizard.openPreferences();syncUiState();destination=ui::Page::WeatherSetup;}
+    else if (displayCoordinator.page() == ui::Page::Settings && ui::kSettingsCategoryActions[5].contains(action.point.x,action.point.y)) destination=ui::Page::LocationPrivacySettings;
+    else if (displayCoordinator.page() == ui::Page::Settings && ui::kSettingsCategoryActions[6].contains(action.point.x,action.point.y)){detailReturnPage=ui::Page::Settings;destination=ui::Page::LowPowerSetup;}
+    else if (displayCoordinator.page() == ui::Page::Settings && ui::kSettingsCategoryActions[7].contains(action.point.x,action.point.y)) destination=ui::Page::TouchRecalibrateConfirm;
+    else if (displayCoordinator.page() == ui::Page::Settings && ui::kSettingsCategoryActions[8].contains(action.point.x,action.point.y)){detailReturnPage=ui::Page::Settings;destination=ui::Page::Diagnostics;}
+    else if (displayCoordinator.page() == ui::Page::Settings && ui::kSettingsCategoryActions[9].contains(action.point.x,action.point.y)) destination=ui::Page::Calculator;
+    else if (displayCoordinator.page() == ui::Page::Settings && ui::kSettingsCategoryActions[10].contains(action.point.x,action.point.y)) destination=detailReturnPage;
+    else if (displayCoordinator.page()==ui::Page::WifiSettings){
+      if(ui::kWifiScanAction.contains(action.point.x,action.point.y)){
+        destination=wifiManager.startScan()?ui::Page::WifiNetworks:ui::Page::WifiSettings;
+      }
+      else if(ui::kWifiManualAction.contains(action.point.x,action.point.y)){wifiManager.beginManualNetwork();wifiEditingPassword=false;destination=ui::Page::WifiEntry;}
+      else if(ui::kWifiDisconnectAction.contains(action.point.x,action.point.y))wifiManager.disconnect();
+      else if(ui::kWifiReconnectAction.contains(action.point.x,action.point.y))wifiManager.reconnect();
+      else if(ui::kWifiForgetAction.contains(action.point.x,action.point.y)&&wifiManager.snapshot().userConfigured)destination=ui::Page::WifiForgetConfirm;
+      else if(ui::kWifiBackAction.contains(action.point.x,action.point.y))destination=wifiReturnPage;
+    } else if(displayCoordinator.page()==ui::Page::WifiNetworks){
+      if(ui::kWifiBackAction.contains(action.point.x,action.point.y))destination=ui::Page::WifiSettings;
+      else for(uint8_t i=0;i<network::kMaximumScanResults;++i)if(ui::kWifiNetworkActions[i].contains(action.point.x,action.point.y)&&wifiManager.selectNetwork(i)){wifiEditingPassword=true;destination=ui::Page::WifiEntry;break;}
+    } else if(displayCoordinator.page()==ui::Page::WifiForgetConfirm){
+      if(ui::kWifiEntryCancelAction.contains(action.point.x,action.point.y))destination=ui::Page::WifiSettings;
+      else if(ui::kWifiEntrySaveAction.contains(action.point.x,action.point.y)){wifiManager.forgetUserCredentials();destination=ui::Page::WifiSettings;}
+    } else if(displayCoordinator.page()==ui::Page::WifiEntry){
+      // Printable ASCII is 95 characters; the 96th grid slot deliberately
+      // repeats Space so every visible key maps to a valid credential byte.
+      const char* pages[]={"ABCDEFGHIJKLMNOPQRSTUVWX","YZabcdefghijklmnopqrstuv","wxyz0123456789!\"#$%&'()","*+,-./:;<=>?@[\\]^_`{|}~  "};
+      bool key=false;for(uint8_t i=0;i<24;++i)if(ui::kWifiEntryKeys[i].contains(action.point.x,action.point.y)){if(wifiEditingPassword)wifiManager.appendPassword(pages[wifiKeyboardPage%4][i]);else wifiManager.appendSsid(pages[wifiKeyboardPage%4][i]);key=true;break;}
+      if(!key&&ui::kWifiEntryModeAction.contains(action.point.x,action.point.y))wifiEditingPassword=!wifiEditingPassword;
+      else if(!key&&ui::kWifiEntryDeleteAction.contains(action.point.x,action.point.y)){if(wifiEditingPassword)wifiManager.backspacePassword();else wifiManager.backspaceSsid();}
+      else if(!key&&ui::kWifiEntryNextAction.contains(action.point.x,action.point.y))wifiKeyboardPage=(wifiKeyboardPage+1)%4;
+      else if(!key&&ui::kWifiEntryCancelAction.contains(action.point.x,action.point.y)){wifiManager.clearEntry();destination=ui::Page::WifiSettings;}
+      else if(!key&&ui::kWifiEntrySaveAction.contains(action.point.x,action.point.y)&&wifiManager.saveAndConnect())destination=ui::Page::WifiSettings;
+      syncUiState();testDisplay();return;
+    } else if(displayCoordinator.page()==ui::Page::DateTimeSettings){
+      if(ui::kDateTimeTimezoneAction.contains(action.point.x,action.point.y)){timezoneReturnPage=ui::Page::DateTimeSettings;destination=ui::Page::TimezoneSetup;}
+      else if(ui::kDateTimeFormatAction.contains(action.point.x,action.point.y)){timeService.toggleHourFormat();syncUiState();testDisplay();return;}
+      else if(ui::kDateTimeSyncAction.contains(action.point.x,action.point.y)){timeService.requestSync();syncUiState();testDisplay();return;}
+    } else if(displayCoordinator.page()==ui::Page::UnitsSettings){
+      if(ui::kUnitsTemperatureAction.contains(action.point.x,action.point.y))telemetryManager.toggleTemperatureUnit();
+      else if(ui::kUnitsSpeedAction.contains(action.point.x,action.point.y))gpsManager.toggleSpeedUnit();
+      else if(ui::kUnitsElevationAction.contains(action.point.x,action.point.y))gpsManager.toggleElevationUnit();
+      else destination=displayCoordinator.page();
+      syncUiState();displayCoordinator.forceDirty();testDisplay();return;
+    } else if(displayCoordinator.page()==ui::Page::LocationPrivacySettings){
+      if(ui::kLocationSettingsGpsAction.contains(action.point.x,action.point.y)){
+        if(gpsManager.snapshot().state!=location::GpsState::Off)gpsManager.setRailEnabled(false);
+        else if(!sharedRailEnabled)setSharedRail(true);else gpsManager.setRailEnabled(true);
+      }else if(ui::kLocationSettingsPrivacyAction.contains(action.point.x,action.point.y))gpsManager.toggleCoordinateVisibility();
+      else if(ui::kLocationSettingsWeatherAction.contains(action.point.x,action.point.y)){weatherWizardReturnPage=ui::Page::LocationPrivacySettings;weatherWizard.openPreferences();destination=ui::Page::WeatherSetup;}
+      syncUiState();displayCoordinator.forceDirty();
+    } else if(displayCoordinator.page()==ui::Page::Calculator){
+      if(ui::kCalculatorBackAction.contains(action.point.x,action.point.y))destination=ui::Page::Settings;
+      else{const utilities::CalculatorKey keys[]={utilities::CalculatorKey::Digit7,utilities::CalculatorKey::Digit8,utilities::CalculatorKey::Digit9,utilities::CalculatorKey::Divide,utilities::CalculatorKey::Digit4,utilities::CalculatorKey::Digit5,utilities::CalculatorKey::Digit6,utilities::CalculatorKey::Multiply,utilities::CalculatorKey::Digit1,utilities::CalculatorKey::Digit2,utilities::CalculatorKey::Digit3,utilities::CalculatorKey::Subtract,utilities::CalculatorKey::Digit0,utilities::CalculatorKey::Decimal,utilities::CalculatorKey::Add,utilities::CalculatorKey::Equals,utilities::CalculatorKey::Clear,utilities::CalculatorKey::Backspace,utilities::CalculatorKey::ToggleSign};for(uint8_t i=0;i<19;++i)if(ui::kCalculatorKeys[i].contains(action.point.x,action.point.y)){calculator.press(keys[i]);syncUiState();testDisplay();return;}}
     } else if (displayCoordinator.page() == ui::Page::Settings &&
                ui::kSettingsTouchAction.contains(action.point.x, action.point.y)) {
       destination=ui::Page::TouchRecalibrateConfirm;
@@ -843,22 +903,22 @@ void loop() {
                ui::kSettingsSyncActionCompact.contains(action.point.x, action.point.y)) {
       timeService.requestSync();syncUiState();testDisplay();
     } else if (displayCoordinator.page() == ui::Page::Settings &&
-               ui::kSettingsLowPowerAction.contains(action.point.x, action.point.y)) {
-      destination=ui::Page::LowPowerSetup;
+               ui::kSettingsTemperatureAction.contains(action.point.x, action.point.y)) {
+      telemetryManager.toggleTemperatureUnit();syncUiState();testDisplay();
     } else if (displayCoordinator.page() == ui::Page::DisplayRefreshMode) {
       if (ui::kRefreshModeBackAction.contains(action.point.x,action.point.y)) destination=ui::Page::Settings;
       else for(uint8_t i=0;i<3;++i) if(ui::kRefreshModeActions[i].contains(action.point.x,action.point.y)){
         displayCoordinator.setRefreshMode(static_cast<ui::RefreshMode>(i));syncUiState();break;
       }
     } else if (displayCoordinator.page() == ui::Page::TimezoneSetup) {
-      if (ui::kTimezoneBackAction.contains(action.point.x, action.point.y)) destination=ui::Page::Settings;
+      if (ui::kTimezoneBackAction.contains(action.point.x, action.point.y)) destination=timezoneReturnPage;
       else for(uint8_t i=0;i<device_time::timezoneCount();++i) if(ui::kTimezoneActions[i].contains(action.point.x,action.point.y)){timeService.setTimezone(i);syncUiState();displayCoordinator.forceDirty();break;}
     } else if (displayCoordinator.page() == ui::Page::LowPowerSetup) {
-      if (ui::kLowPowerBackAction.contains(action.point.x,action.point.y)) destination=ui::Page::Settings;
-      else {const power::Preset presets[]={power::Preset::Off,power::Preset::Min5,power::Preset::Min15,power::Preset::Min30,power::Preset::Min60};for(uint8_t i=0;i<5;++i)if(ui::kLowPowerPresetActions[i].contains(action.point.x,action.point.y)){lowPowerManager.selectPreset(presets[i],now);syncUiState();destination=presets[i]==power::Preset::Off?ui::Page::Settings:ui::Page::LowPowerStatus;break;}}
+      if (ui::kLowPowerBackAction.contains(action.point.x,action.point.y)) destination=detailReturnPage;
+      else {const power::Preset presets[]={power::Preset::Off,power::Preset::Min5,power::Preset::Min15,power::Preset::Min30,power::Preset::Min60};for(uint8_t i=0;i<5;++i)if(ui::kLowPowerPresetActions[i].contains(action.point.x,action.point.y)){lowPowerManager.selectPreset(presets[i],now);syncUiState();destination=presets[i]==power::Preset::Off?detailReturnPage:ui::Page::LowPowerStatus;break;}}
     } else if (displayCoordinator.page() == ui::Page::LowPowerStatus) {
-      if (ui::kLowPowerExitAction.contains(action.point.x,action.point.y)){lowPowerManager.exit(now);syncUiState();destination=ui::Page::Settings;}
-      else if(ui::kLowPowerBackAction.contains(action.point.x,action.point.y))destination=ui::Page::Settings;
+      if (ui::kLowPowerExitAction.contains(action.point.x,action.point.y)){lowPowerManager.exit(now);syncUiState();destination=ui::Page::Device;}
+      else if(ui::kLowPowerBackAction.contains(action.point.x,action.point.y))destination=ui::Page::Device;
     } else if (displayCoordinator.page()==ui::Page::Home && ui::kHomeHostAction.contains(action.point.x,action.point.y)) {
       detailReturnPage=ui::Page::Home;destination=ui::Page::SystemHealth;
     } else if (displayCoordinator.page()==ui::Page::Home && ui::kHomeMetricsAction.contains(action.point.x,action.point.y)) {
@@ -923,21 +983,26 @@ void loop() {
     }
   } else if (action.type == input::ActionType::SwipeLeft || action.type == input::ActionType::SwipeRight) {
     const ui::Page pages[] = {ui::Page::Home,ui::Page::Systems,ui::Page::Radio,ui::Page::Location,ui::Page::Device};
-    int index=0; for(int i=0;i<5;++i) if(displayCoordinator.page()==pages[i]) index=i;
-    index=constrain(index+(action.type==input::ActionType::SwipeLeft?1:-1),0,4);
-    if(displayCoordinator.requestPage(pages[index],millis())){
-      Serial.printf("TOUCH navigation=SELECTED target=%u gesture=%s\n",static_cast<unsigned>(pages[index]),action.type==input::ActionType::SwipeLeft?"SWIPE_LEFT":"SWIPE_RIGHT");
-      testDisplay();
+    int index=-1; for(int i=0;i<5;++i) if(displayCoordinator.page()==pages[i]) index=i;
+    // Forms, dialogs, calculators, scans, setup, and calibration are all
+    // non-primary pages, so recognized movement is deliberately ignored there.
+    if(index>=0){
+      index=constrain(index+(action.type==input::ActionType::SwipeLeft?1:-1),0,4);
+      if(displayCoordinator.requestPage(pages[index],millis())){
+        Serial.printf("TOUCH navigation=SELECTED target=%u gesture=%s\n",static_cast<unsigned>(pages[index]),action.type==input::ActionType::SwipeLeft?"SWIPE_LEFT":"SWIPE_RIGHT");
+        testDisplay();
+      }
     }
   }
   // Touch routing always gets the first opportunity after the safe post-GC16
   // gate. Service initialization starts only after that first unblocked sample,
   // so neither NVS/I2C setup nor Wi-Fi task creation extends the touch gate.
   if (touchReadyReported) {
-    startBackgroundWorkers();
     initializeLocalServices();
+    startBackgroundWorkers();
   }
   gpsManager.poll(now);
+  if(localServicesInitialized)wifiManager.poll(now,!lowPowerManager.snapshot().active||lowPowerManager.snapshot().awakeWindow||lowPowerManager.snapshot().criticalHold);
   const location::Snapshot gpsState = gpsManager.snapshot();
   weatherManager.setGpsPosition(location::currentFixUsable(gpsState), gpsState.latitude, gpsState.longitude);
   const uint32_t latestTelemetryVersion = telemetryManager.version();
@@ -953,21 +1018,25 @@ void loop() {
   const uint32_t latestBatteryVersion = batteryManager.version();
   const uint32_t latestGpsVersion = gpsManager.version();
   const uint32_t latestLowPowerVersion = lowPowerManager.version();
+  const uint32_t latestWifiVersion = wifiManager.version();
   if (latestTelemetryVersion != observedTelemetryVersion ||
       latestTimeVersion != observedTimeVersion ||
       latestWeatherVersion != observedWeatherVersion ||
       latestBatteryVersion != observedBatteryVersion ||
       latestGpsVersion != observedGpsVersion ||
-      latestLowPowerVersion != observedLowPowerVersion) {
+      latestLowPowerVersion != observedLowPowerVersion ||
+      latestWifiVersion != observedWifiVersion) {
     observedTelemetryVersion = latestTelemetryVersion;
     observedTimeVersion = latestTimeVersion;
     observedWeatherVersion = latestWeatherVersion;
     observedBatteryVersion = latestBatteryVersion;
     observedGpsVersion = latestGpsVersion;
     observedLowPowerVersion = latestLowPowerVersion;
+    observedWifiVersion = latestWifiVersion;
     syncUiState();
   }
-  if (displayCoordinator.dirty() && !displayCoordinator.inputBlocked(millis())) testDisplay();
+  if (displayCoordinator.dirty() && touchController.displayCaptureSettled() &&
+      !displayCoordinator.inputBlocked(millis())) testDisplay();
   if (radioListening && digitalRead(hq::kBoard.loraIrq)) {
     String packet;
     const int state = radio.readData(packet);

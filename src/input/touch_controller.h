@@ -32,6 +32,7 @@ class TouchController {
   void resetQualification();
   bool beginDisplayCapture();
   void endDisplayCapture();
+  bool displayCaptureSettled() const;
   bool takeQueuedAction(TouchAction& action);
   void notifyDisplayUpdateFinished(uint32_t nowMs);
   void printStatus() const;
@@ -67,12 +68,14 @@ class TouchController {
   uint32_t downAtMs_ = 0, cleanReleaseSinceMs_ = 0, lastContactReportMs_ = 0;
   uint32_t receivedCount_ = 0, acceptedCount_ = 0, debouncedCount_ = 0, droppedCount_ = 0;
   uint32_t lastPressToActionMs_ = 0, maximumPressToActionMs_ = 0;
-  volatile bool displayCaptureActive_ = false, displayCaptureIdle_ = true;
+  bool displayCaptureActive_ = false, displayCaptureIdle_ = true;
+  bool displayCaptureFinalizePending_ = false;
   bool queuedActionPending_ = false;
   TouchAction queuedAction_{ActionType::None,{0,0},"EMPTY"};
   uint32_t queuedActionCount_ = 0, coalescedActionCount_ = 0;
   TaskHandle_t captureTaskHandle_ = nullptr;
   portMUX_TYPE queueMux_ = portMUX_INITIALIZER_UNLOCKED;
+  mutable portMUX_TYPE captureMux_ = portMUX_INITIALIZER_UNLOCKED;
   Preferences preferences_;
 };
 }  // namespace input

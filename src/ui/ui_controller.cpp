@@ -98,6 +98,13 @@ bool DisplayCoordinator::manualRefreshAvailable(uint32_t nowMs) const {
       nowMs - lastManualRefreshMs_ >= kManualRefreshLimitMs);
 }
 
+uint32_t DisplayCoordinator::manualRefreshRemainingSeconds(uint32_t nowMs) const {
+  if (manualRefreshAvailable(nowMs)) return 0;
+  const uint32_t elapsed = nowMs - lastManualRefreshMs_;
+  return elapsed >= kManualRefreshLimitMs ? 0 :
+      (kManualRefreshLimitMs - elapsed + 999) / 1000;
+}
+
 bool DisplayCoordinator::framebufferGuardsIntact() const {
   if (!guardedAllocation_ || !compositionBuffer_) return false;
   for (size_t index=0; index<kGuardBytes; ++index) {
@@ -225,11 +232,18 @@ bool DisplayCoordinator::manualFullRefresh(uint32_t nowMs, Page returnPage) {
   uint8_t* framebuffer=epd_hl_get_framebuffer(&gDisplayState);
   if(!framebuffer)return false;
   updating_=true;
-  lastManualRefreshMs_=nowMs;
+  // This operation composes and presents the destination itself. Consume any
+  // older cosmetic demand so it cannot redraw stale UI afterward.
+  pendingRender_=RenderPriority::None;
+  pendingSinceMs_=0;
+  navigationRequestedMs_=0;
   const Page previousPage=snapshot_.page;
-  Serial.printf("DISPLAY manual_refresh=ACKNOWLEDGED message=REFRESHING_DISPLAY return_page=%s\n",
+  Serial.printf("DISPLAY cleanup=ACKNOWLEDGED message=CLEANING_DISPLAY return_page=%s\n",
                 pageName(returnPage));
   epd_poweron();
+  // Start the cooldown only after the panel cleanup has physically begun. A tap
+  // rejected before this point remains eligible instead of consuming the limit.
+  lastManualRefreshMs_=millis();
   const uint32_t cleanupStartedMs=millis();
   epd_fullclear(&gDisplayState,epd_ambient_temperature());
   lastFullCleanupDurationMs_=millis()-cleanupStartedMs;
@@ -237,10 +251,15 @@ bool DisplayCoordinator::manualFullRefresh(uint32_t nowMs, Page returnPage) {
   memset(compositionBuffer_,0xFF,kFramebufferBytes);
   UiSnapshot returnSnapshot=snapshot_;
   returnSnapshot.page=returnPage;
+  // The restored Device page must immediately describe the newly active limit.
+  // Keep this static until another legitimate redraw; a one-second EPD timer
+  // would waste power and create avoidable panel updates.
+  returnSnapshot.manualRefreshRateLimited=true;
+  returnSnapshot.manualRefreshRemainingSeconds=kManualRefreshLimitMs/1000;
   renderPage(compositionBuffer_,returnSnapshot);
   if(!framebufferGuardsIntact()){
     epd_poweroff();updating_=false;
-    Serial.println("DISPLAY manual_refresh=ABORTED canaries=CORRUPTED high_voltage=OFF");
+    Serial.println("DISPLAY cleanup=ABORTED canaries=CORRUPTED high_voltage=OFF");
     return false;
   }
   memcpy(framebuffer,compositionBuffer_,kFramebufferBytes);
@@ -249,9 +268,9 @@ bool DisplayCoordinator::manualFullRefresh(uint32_t nowMs, Page returnPage) {
   lastGc16DurationMs_=millis()-gc16StartedMs;
   epd_poweroff();updating_=false;lastRefreshMs_=millis();++refreshCount_;++renderRenderedCount_;
   lastRenderDurationMs_=lastFullCleanupDurationMs_+lastGc16DurationMs_;
-  if(result==EPD_DRAW_SUCCESS)snapshot_.page=returnPage;
+  if(result==EPD_DRAW_SUCCESS){snapshot_=returnSnapshot;failedUpdateRetryUsed_=false;}
   else{snapshot_.page=previousPage;requestRender(RenderPriority::Navigation);}
-  Serial.printf("DISPLAY manual_refresh=COMPLETE cleanup=FULLCLEAR render=GC16 page=%s result=%d state=PRESERVED gc16_ms=%lu cleanup_ms=%lu\n",
+  Serial.printf("DISPLAY cleanup=COMPLETE method=FULLCLEAR render=GC16 page=%s result=%d state=PRESERVED gc16_ms=%lu cleanup_ms=%lu\n",
                 pageName(returnPage),static_cast<int>(result),static_cast<unsigned long>(lastGc16DurationMs_),static_cast<unsigned long>(lastFullCleanupDurationMs_));
   Serial.println("DISPLAY high_voltage=OFF");
   return result==EPD_DRAW_SUCCESS;

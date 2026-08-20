@@ -98,14 +98,12 @@ bool TelemetryManager::begin() {
         ? appconfig::TemperatureUnit::Fahrenheit : appconfig::TemperatureUnit::Celsius;
   }
   snapshot_.fetchState = appconfig::configured() ? FetchState::Connecting : FetchState::SetupRequired;
-  snapshot_.wifiState = appconfig::configured() ? WifiState::Connecting : WifiState::NotConfigured;
+  snapshot_.wifiState = WifiState::NotConfigured;
   snapshot_.version = 1;
   if (!appconfig::configured()) {
-    Serial.println("TELEMETRY configuration=NOT_CONFIGURED local_file=src/secrets.h");
+    Serial.println("TELEMETRY configuration=NOT_CONFIGURED source=LOCAL_FALLBACK");
     return true;
   }
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(false);
   return xTaskCreatePinnedToCore(taskEntry, "guardian", appconfig::kTaskStackBytes,
                                  this, 1, nullptr, 0) == pdPASS;
 }
@@ -223,7 +221,6 @@ void TelemetryManager::run() {
     }
     const wl_status_t wifi = WiFi.status();
     if (wifi == WL_CONNECTED) {
-      reconnectDelayMs_ = 2000;
       updateConnectionState(WifiState::Connected, true);
       portENTER_CRITICAL(&scheduleMux_);
       const bool refreshRequested = refreshRequested_;
@@ -242,23 +239,9 @@ void TelemetryManager::run() {
       }
     } else {
       Snapshot current = snapshot();
-      if ((current.wifiState == WifiState::Connecting || current.wifiState == WifiState::Reconnecting) &&
-          reachedDeadline(now, wifiAttemptStartedMs_ + appconfig::kWifiConnectTimeoutMs)) {
-        WiFi.disconnect();
-        current.wifiState = WifiState::Failed;
-        current.rssiAvailable = false;
-        publish(current);
-        nextWifiAttemptMs_ = now + reconnectDelayMs_;
-        reconnectDelayMs_ = min<uint32_t>(reconnectDelayMs_ * 2, 60000);
-      } else if (current.wifiState != WifiState::Connecting &&
-                 (!nextWifiAttemptMs_ || reachedDeadline(now, nextWifiAttemptMs_))) {
-        current.wifiState = current.lastSuccessMs ? WifiState::Reconnecting : WifiState::Connecting;
-        current.rssiAvailable = false;
-        if (!current.lastSuccessMs) current.fetchState = FetchState::Connecting;
-        publish(current);
-        WiFi.begin(appconfig::kWifiSsid, appconfig::kWifiPassword);
-        wifiAttemptStartedMs_ = now;
-      }
+      const WifiState observed = current.lastSuccessMs ? WifiState::Reconnecting
+                                                       : WifiState::Connecting;
+      updateConnectionState(observed, false);
     }
     vTaskDelay(pdMS_TO_TICKS(100));
   }

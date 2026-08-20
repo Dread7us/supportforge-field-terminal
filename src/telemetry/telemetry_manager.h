@@ -38,9 +38,6 @@ class TelemetryManager {
   bool inFlight_ = false;
   uint32_t heartbeat_ = 0;
   uint32_t nextPollMs_ = 0;
-  uint32_t nextWifiAttemptMs_ = 0;
-  uint32_t wifiAttemptStartedMs_ = 0;
-  uint32_t reconnectDelayMs_ = 2000;
   uint32_t nextPrimaryProbeMs_ = 0;
   Endpoint preferredEndpoint_ = Endpoint::EP1;
 };

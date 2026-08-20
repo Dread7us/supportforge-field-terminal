@@ -85,6 +85,18 @@ class LocationWeatherSetupTests(unittest.TestCase):
             self.assertIn(f"LocationSource::{source}", WEATHER)
         self.assertNotIn("putString(\"source", GPS)
 
+    def test_weather_identity_persists_and_temporary_labels_resolve(self):
+        for key in ('"city"', '"region"', '"country"', '"postal"'):
+            self.assertIn(f'preferences_.putString({key}', WEATHER)
+            self.assertIn(f'preferences_.getString({key}', WEATHER)
+        self.assertIn('bool WeatherManager::resolveIdentity', WEATHER)
+        self.assertIn('if(resolved)persistIdentity(n)', WEATHER)
+        self.assertIn('!strcmp(n.city,"GPS LOCATION")', WEATHER)
+        self.assertIn('!strcmp(n.city,"MANUAL LOCATION")', WEATHER)
+        self.assertIn('strcmp(w.city,"GPS LOCATION")', PAGES)
+        self.assertIn('strcmp(w.city,"MANUAL LOCATION")', PAGES)
+        self.assertIn('String(w.city) + (w.region[0] ? String(", ") + w.region : "")', PAGES)
+
     def test_gps_weather_selection_persists_without_waiting_for_fix(self):
         self.assertIn("manager.saveGps(); state_.step=WizardStep::Gps", WIZARD)
         self.assertIn("bool WeatherManager::saveGps(){return persist(LocationSource::Gps", WEATHER)

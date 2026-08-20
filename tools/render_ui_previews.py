@@ -8,7 +8,7 @@ W,H=SPEC["canvas"]["width"],SPEC["canvas"]["height"];G,P=SPEC["geometry"],SPEC["
 INK,MUTED,RULE,STRONG,SOFT,PAPER=P["ink"],P["ink_muted"],P["rule"],P["surface_strong"],P["surface_soft"],P["paper"]
 FONT_PATH=ROOT/SPEC["font"]["source"]
 FONTS={z:ImageFont.truetype(str(FONT_PATH),size=size) for z,size in ((1,12),(2,16),(3,24))}
-BRAND=ImageFont.truetype(str(FONT_PATH),size=30)
+BRAND=ImageFont.truetype(str(ROOT/"assets/fonts/Inter-Bold.ttf"),size=32)
 PAGES={"home-setup":"HOME","systems-empty":"SYSTEMS","radio-receive-only":"RADIO","location-gps":"LOCATION","device-status":"DEVICE","hardware-diagnostics":"HARDWARE DIAGNOSTICS"}
 
 def tw(s,z=2):return round(FONTS[z].getlength(s))
@@ -41,14 +41,19 @@ def tile(d,r,l,v,detail="",g="INFO"):
  if detail:text(d,(x+16,y+82),detail,1,MUTED,w-32)
 def row(d,r,l,v,div=True):x,y,w,h=r;text(d,(x,y+20),l,2,MUTED,w//2);text(d,(x+w,y+20),v,2,INK,w//2,"right");div and d.line((x,y+h-1,x+w-1,y+h-1),fill=RULE)
 def empty(d,r,t,b,g):rr(d,r,14);x,y,w,h=r;cx=x+w//2;icon(d,g,cx,y+64,42);text(d,(cx,y+108),t,2,a="center");text(d,(cx,y+144),b,1,MUTED,a="center")
-def app(d,s):d.text((24,8),"supportFORGE",font=BRAND,fill=INK);text(d,(24,52),"FIELD TERMINAL",2,MUTED);text(d,(516,12),"--:--",3,a="right");text(d,(420,49),"--/--",1,MUTED,48);icon(d,"BATTERY",484,72,24);text(d,(502,60),"--",1,MUTED,24);d.line((0,103,539,103),fill=RULE)
+def app(d,s):
+ d.rectangle((16,8,251,46),fill=PAPER);d.rectangle((264,8,403,46),fill=PAPER);d.rectangle((416,8,523,46),fill=PAPER)
+ d.text((16,39),"supportFORGE",font=BRAND,fill=INK,anchor="ls")
+ text(d,(404,24),"--:--  TIME SYNC",1,INK,a="right");icon(d,"BATTERY",486,28,28);text(d,(486,21),"--",1,INK,a="center")
+ d.line((0,55,539,55),fill=RULE)
 def nav(d,s):
  if s=="HARDWARE DIAGNOSTICS":s="DEVICE"
  d.rectangle((0,864,539,959),fill=PAPER);d.line((0,864,539,864),fill=INK)
- for i,l in enumerate(SPEC["navigation"]["labels"]):
-  x=i*108;active=l==s
-  if active:d.rectangle((x,865,x+107,869),fill=INK)
-  icon(d,("HOME","SYSTEMS","RADIO","LOCATION","DEVICE")[i],x+54,899,24,INK if active else MUTED);text(d,(x+54,931),l,1,INK if active else MUTED,a="center")
+ for i,(l,b) in enumerate(zip(SPEC["navigation"]["labels"],SPEC["navigation"]["bounds"])):
+  x,y,w,h=b;active=l==s;fg=PAPER if active else INK
+  d.rectangle((x,y+3,x+w-1,y+h-1),fill=INK if active else PAPER,outline=INK,width=2)
+  icon(d,("HOME","SYSTEMS","RADIO","LOCATION","DEVICE")[i],x+w//2,y+39,26,fg);text(d,(x+w//2,y+66),l,1,fg,a="center")
+ x,y,w,h=SPEC["navigation"]["utility"]["bounds"];d.rectangle((x,y+3,x+w-1,y+h-1),fill=PAPER,outline=INK,width=2);d.ellipse((x+w//2-15,y+21,x+w//2+15,y+51),outline=INK);text(d,(x+w//2,y+66),"REFRESH",1,INK,a="center")
 def render(page):
  im=Image.new("L",(W,H),PAPER);d=ImageDraw.Draw(im);app(d,page)
  if page=="HOME":
