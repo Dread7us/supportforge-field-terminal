@@ -9,7 +9,10 @@
 
 namespace ui {
 
-enum class Icon : uint8_t { Home, Systems, Radio, Location, Device, Battery, Wifi, Lock, Check, Info };
+enum class Icon : uint8_t {
+  Home, Systems, Radio, Location, Device, Battery, Wifi, Lock, Check, Info,
+  ChevronLeft, ChevronRight, Refresh, Settings, Power, Search, Close
+};
 enum class FontRole : uint8_t {
   Caption, Body, CardHeading, PageHeading, Brand, Metric, HomeClock, VehicleSpeed, AltimeterMetric, Navigation,
   QualificationCurrent, QualificationRegularAa, QualificationMediumAa,

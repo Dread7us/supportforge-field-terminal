@@ -69,6 +69,7 @@ class SettingsWifiCalculatorTests(unittest.TestCase):
         self.assertIn("bodyY=titleRegion.y+titleRegion.h+4", card)
         self.assertIn("detailY=valueRegion.y+valueRegion.h+4", tile)
         self.assertIn("FontRole::Caption,kPaper", tile)
+        self.assertIn("icon(fb,glyph", tile)
 
     def test_wifi_manager_is_bounded_async_owner_and_forget_is_user_only(self):
         self.assertIn("kMaximumScanResults = 6", WIFI_H)

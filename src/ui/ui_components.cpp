@@ -27,7 +27,37 @@ const fonts::Font& fontFor(FontRole role) {
 }
 
 void line(uint8_t* fb, int x1, int y1, int x2, int y2, uint8_t color) {
+  // Two-pixel strokes remain legible after GC16 refresh and give every icon the
+  // same optical weight as the embedded Inter SemiBold labels.
   epd_draw_line(x1, y1, x2, y2, color, fb);
+  if (abs(x2 - x1) >= abs(y2 - y1)) epd_draw_line(x1, y1 + 1, x2, y2 + 1, color, fb);
+  else epd_draw_line(x1 + 1, y1, x2 + 1, y2, color, fb);
+}
+
+Icon actionIcon(const String& raw) {
+  String label = raw;
+  label.toUpperCase();
+  if (label.indexOf("BACK") >= 0 || label.indexOf("CANCEL") >= 0 || label == "DEVICE")
+    return Icon::ChevronLeft;
+  if (label.indexOf("DELETE") >= 0 || label.indexOf("FORGET") >= 0 || label == "C")
+    return Icon::Close;
+  if (label.indexOf("REFRESH") >= 0 || label.indexOf("RETRY") >= 0 ||
+      label.indexOf("SYNC") >= 0 || label.indexOf("SCAN") >= 0 ||
+      label.indexOf("RECONNECT") >= 0 || label.indexOf("CLEAN") >= 0)
+    return Icon::Refresh;
+  if (label.indexOf("SETTING") >= 0 || label.indexOf("PREFERENCE") >= 0 ||
+      label.indexOf("MODE") >= 0 || label.indexOf("UNIT") >= 0 ||
+      label.indexOf("FORMAT") >= 0) return Icon::Settings;
+  if (label.indexOf("GPS") >= 0 || label.indexOf("POWER") >= 0 ||
+      label.indexOf("DISCONNECT") >= 0 || label.indexOf("OFF") >= 0 ||
+      label.indexOf("ON") >= 0) return Icon::Power;
+  if (label.indexOf("NETWORK") >= 0 || label.indexOf("SEARCH") >= 0)
+    return Icon::Search;
+  if (label.indexOf("SAVE") >= 0 || label.indexOf("CONFIRM") >= 0 ||
+      label.indexOf("SELECT") >= 0 || label.indexOf("NEXT") >= 0 ||
+      label.indexOf("OPEN") >= 0 || label.indexOf("DONE") >= 0)
+    return Icon::Check;
+  return Icon::ChevronRight;
 }
 
 int glyphIndex(char raw) {
@@ -92,20 +122,31 @@ void actionButton(uint8_t* fb, Rect bounds, const String& label, bool selected) 
   // Buttons are dynamic regions: erase the complete visual bounds first so a
   // shorter replacement label or inverse-state transition cannot retain ink.
   epd_fill_rect({bounds.x, bounds.y, bounds.w, bounds.h}, kPaper, fb);
-  roundedRect(fb, bounds, 10, selected ? kInk : kPaper, kInk);
+  roundedRect(fb, bounds, kRadiusControl, selected ? kInk : kPaper, kInk);
   const Rect content{bounds.x + kHorizontalPadding, bounds.y + kVerticalPadding,
                      bounds.w - 2 * kHorizontalPadding,
                      bounds.h - 2 * kVerticalPadding};
+  // Character pads and calculator keys are already iconographic controls. All
+  // titled controls receive one universal leading icon in a fixed-size column.
+  const bool compactKey = bounds.w <= 120 && label.length() <= 3;
+  const int iconColumn = compactKey ? 0 : min(kIconBoxSize + kIconLabelGap, content.w / 4);
+  const Rect labelContent{content.x + iconColumn, content.y,
+                          content.w - iconColumn, content.h};
   const FontRole role = textFits(label, FontRole::CardHeading, content)
                             ? FontRole::CardHeading
                             : FontRole::Body;
-  const String shown = fittedText(label, role, content.w);
-  const int x = content.x + (content.w - textWidth(shown, role)) / 2;
+  const String shown = fittedText(label, role, labelContent.w);
+  const int x = labelContent.x + (labelContent.w - textWidth(shown, role)) / 2;
   // Center the font's ascent/descent box inside the same inset rectangle used
   // for clipping. The former implementation centered against the outer button
   // but clipped against an inset rectangle, which could remove descenders or
   // the top row after generated-font metric changes.
-  text(fb, content, x, centeredBaseline(content, role), shown, role,
+  if (!compactKey) {
+    const uint8_t foreground = selected ? kPaper : kInk;
+    icon(fb, actionIcon(label), content.x + kIconBoxSize / 2,
+         content.y + content.h / 2, 20, foreground);
+  }
+  text(fb, labelContent, x, centeredBaseline(content, role), shown, role,
        selected ? kPaper : kInk);
 }
 
@@ -168,6 +209,24 @@ void icon(uint8_t* fb, Icon value, int cx, int cy, int s, uint8_t color) {
       line(fb,cx-h,cy,cx-2,cy+h,color); line(fb,cx-2,cy+h,cx+h,cy-h,color); break;
     case Icon::Info:
       epd_draw_circle(cx,cy,h,color,fb); line(fb,cx,cy-1,cx,cy+h/2,color); epd_fill_circle(cx,cy-h/2,2,color,fb); break;
+    case Icon::ChevronLeft:
+      line(fb,cx+h/3,cy-h,cx-h/2,cy,color); line(fb,cx-h/2,cy,cx+h/3,cy+h,color); break;
+    case Icon::ChevronRight:
+      line(fb,cx-h/3,cy-h,cx+h/2,cy,color); line(fb,cx+h/2,cy,cx-h/3,cy+h,color); break;
+    case Icon::Refresh:
+      epd_draw_circle(cx,cy,h-2,color,fb); line(fb,cx+h-1,cy-h+1,cx+h-1,cy-2,color);
+      line(fb,cx+h-1,cy-h+1,cx+2,cy-h+1,color); break;
+    case Icon::Settings:
+      epd_draw_circle(cx,cy,h-2,color,fb); epd_fill_circle(cx,cy,3,color,fb);
+      epd_draw_hline(cx-h-3,cy,5,color,fb); epd_draw_hline(cx+h-2,cy,5,color,fb);
+      epd_draw_vline(cx,cy-h-3,5,color,fb); epd_draw_vline(cx,cy+h-2,5,color,fb); break;
+    case Icon::Power:
+      epd_draw_circle(cx,cy+2,h-2,color,fb); epd_fill_rect({cx-2,cy-h-2,5,h+2},kPaper,fb);
+      line(fb,cx,cy-h,cx,cy+1,color); break;
+    case Icon::Search:
+      epd_draw_circle(cx-2,cy-2,h-3,color,fb); line(fb,cx+h/3,cy+h/3,cx+h,cy+h,color); break;
+    case Icon::Close:
+      line(fb,cx-h,cy-h,cx+h,cy+h,color); line(fb,cx+h,cy-h,cx-h,cy+h,color); break;
   }
 }
 
@@ -322,14 +381,14 @@ void appBar(uint8_t* fb, const UiSnapshot& state, const char* section) {
 }
 
 void card(uint8_t* fb, Rect b, const char* eyebrow, const String& title, const String& body) {
-  roundedRect(fb,b,12,kPaper,kInk);
+  roundedRect(fb,b,kRadiusCard,kPaper,kInk);
   const int stripHeight=min(38,b.h/3);
-  epd_fill_rect({b.x+2,b.y+2,b.w-4,stripHeight},kInk,fb);
   const Rect clip{b.x+18,b.y+stripHeight+6,b.w-36,b.h-stripHeight-14};
   const bool compact = b.h < 100;
-  text(fb,{b.x+14,b.y+2,b.w-28,stripHeight},b.x+14,
-       centeredBaseline({b.x+14,b.y+2,b.w-28,stripHeight},FontRole::Caption),
-       eyebrow,FontRole::Caption,kPaper);
+  epd_fill_rect({b.x+16,b.y+stripHeight-2,b.w-32,2},kInk,fb);
+  text(fb,{b.x+18,b.y+2,b.w-36,stripHeight-4},b.x+18,
+       centeredBaseline({b.x+18,b.y+2,b.w-36,stripHeight-4},FontRole::Caption),
+       eyebrow,FontRole::Caption,kInk);
   const FontRole titleRole = compact ? FontRole::CardHeading : FontRole::PageHeading;
   const FontRole bodyRole = compact ? FontRole::Caption : FontRole::Body;
   const Rect titleRegion{clip.x,clip.y,clip.w,min(clip.h,textHeight(titleRole))};
@@ -351,11 +410,13 @@ void statusPill(uint8_t* fb, Rect b, const String& label, bool dark) {
 }
 
 void metricTile(uint8_t* fb, Rect b, Icon glyph, const char* label, const String& value, const String& detail) {
-  roundedRect(fb,b,10,kPaper,kInk);
-  epd_fill_rect({b.x+2,b.y+2,b.w-4,34},kInk,fb);
-  icon(fb,glyph,b.x+21,b.y+19,18,kPaper);
-  text(fb,{b.x+38,b.y+2,b.w-48,34},b.x+38,centeredBaseline({b.x+38,b.y+2,b.w-48,34},FontRole::Caption),label,FontRole::Caption,kPaper);
-  const Rect clip{b.x+14,b.y+40,b.w-28,b.h-48};
+  roundedRect(fb,b,kRadiusControl,kPaper,kInk);
+  // The compact inverted header gives icon and title one shared baseline and
+  // guarantees full contrast even after repeated physical-panel refreshes.
+  epd_fill_rect({b.x+2,b.y+2,b.w-4,36},kInk,fb);
+  icon(fb,glyph,b.x+23,b.y+20,20,kPaper);
+  text(fb,{b.x+42,b.y+2,b.w-54,34},b.x+42,centeredBaseline({b.x+42,b.y+2,b.w-54,34},FontRole::Caption),label,FontRole::Caption,kPaper);
+  const Rect clip{b.x+14,b.y+44,b.w-28,b.h-50};
   const Rect valueRegion{clip.x+2,clip.y,clip.w-2,min(clip.h,textHeight(FontRole::CardHeading))};
   text(fb,valueRegion,valueRegion.x,centeredBaseline(valueRegion,FontRole::CardHeading),
        fittedText(value,FontRole::CardHeading,valueRegion.w),FontRole::CardHeading,kInk);
@@ -420,12 +481,11 @@ void bottomNavigation(uint8_t* fb, Page selected) {
   for(int i=0;i<5;++i){
     const Rect target{i*spec::kNavItemWidth,kContentBottom,spec::kNavItemWidth,kNavHeight};
     const bool active=target.x==selectedTarget.x;
-    epd_fill_rect({target.x,kContentBottom+3,target.w,kNavHeight-3},active?kInk:kPaper,fb);
-    epd_draw_rect({target.x,kContentBottom+3,target.w,kNavHeight-3},kInk,fb);
-    epd_draw_rect({target.x+1,kContentBottom+4,target.w-2,kNavHeight-5},kInk,fb);
-    icon(fb,icons[i],target.x+target.w/2,kContentBottom+39,26,active?kPaper:kInk);
+    const Rect visual{target.x+5,kContentBottom+8,target.w-10,kNavHeight-14};
+    roundedRect(fb,visual,kRadiusControl,active?kInk:kPaper,active?kInk:kPaper);
+    icon(fb,icons[i],target.x+target.w/2,kContentBottom+34,28,active?kPaper:kInk);
     const int x=target.x+(target.w-textWidth(labels[i],FontRole::Navigation))/2;
-    text(fb,{target.x+3,kContentBottom+54,target.w-6,39},x,kContentBottom+80,
+    text(fb,{target.x+3,kContentBottom+50,target.w-6,34},x,kContentBottom+76,
          labels[i],FontRole::Navigation,active?kPaper:kInk);
   }
 }

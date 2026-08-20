@@ -438,8 +438,7 @@ void systems(uint8_t* fb,const UiSnapshot& s){
     labeledRow(fb,{44,416,452,48},"PROVIDER",t.speedTest.provider.available?t.speedTest.provider.value:"--",false);
     card(fb,c[1],"DATA FRESHNESS",age(millis(),t.lastSuccessMs),telemetry::endpointName(t.activeEndpoint));
   }
-  roundedRect(fb,kSystemsSectionAction,10,kSurfaceStrong,kInk);
-  text(fb,{44,754,452,40},44,784,String("NEXT SECTION: ")+sections[(section+1)%4],FontRole::CardHeading,kInk);
+  actionButton(fb,kSystemsSectionAction,String("NEXT SECTION: ")+sections[(section+1)%4]);
 }
 
 void radioPage(uint8_t* fb,const UiSnapshot& s){
@@ -488,7 +487,7 @@ void device(uint8_t* fb,const UiSnapshot& s){
       String("DISPLAY CLEANUP AVAILABLE IN ")+String(s.manualRefreshRemainingSeconds)+" SECONDS":
       String("CLEAN DISPLAY");
   actionButton(fb,kDeviceDisplayRefreshAction,cleanupLabel,!s.manualRefreshRateLimited);
-  card(fb,c[5],"DEVICE SETTINGS","MAIN SETTINGS","Wi-Fi, time, display, units and power");
+  actionButton(fb,kDeviceSettingsAction,"MAIN SETTINGS");
 }
 
 void diagnostics(uint8_t* fb,const UiSnapshot& s){

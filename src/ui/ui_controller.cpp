@@ -263,6 +263,7 @@ bool DisplayCoordinator::renderWhiteTest(uint32_t nowMs) {
   const uint32_t cleanupStartedMs=millis();
   noteCleanupStarted(cleanupStartedMs);
   epd_fullclear(&gDisplayState,epd_ambient_temperature());
+  fullClearUsed_=true;
   lastFullCleanupDurationMs_=millis()-cleanupStartedMs;
   memset(compositionBuffer_,0xFF,kFramebufferBytes);
   if(!framebufferGuardsIntact()){
@@ -303,6 +304,7 @@ bool DisplayCoordinator::manualFullRefresh(uint32_t nowMs, Page returnPage) {
   const uint32_t cleanupStartedMs=millis();
   noteCleanupStarted(cleanupStartedMs);
   epd_fullclear(&gDisplayState,epd_ambient_temperature());
+  fullClearUsed_=true;
   lastFullCleanupDurationMs_=millis()-cleanupStartedMs;
   memset(compositionBuffer_,0xFF,kFramebufferBytes);
   UiSnapshot returnSnapshot=snapshot_;

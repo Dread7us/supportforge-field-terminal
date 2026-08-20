@@ -16,6 +16,16 @@ constexpr int kMinimumTouchTarget = spec::kMinimumTouchTarget;
 constexpr bool kPartialRefreshEnabled = false;
 constexpr bool kHighContrastQualificationTheme = true;
 
+// Shared visual tokens keep every route on the same 8 px rhythm. The panel is
+// deliberately pure black and white; hierarchy comes from weight, whitespace,
+// shape, and inversion instead of low-contrast gray that fades on e-paper.
+constexpr int kRadiusSmall = 8;
+constexpr int kRadiusControl = 12;
+constexpr int kRadiusCard = 16;
+constexpr int kControlInset = 16;
+constexpr int kIconBoxSize = 32;
+constexpr int kIconLabelGap = 12;
+
 constexpr uint8_t kInk = spec::kInk;
 constexpr uint8_t kInkMuted = spec::kInkMuted;
 constexpr uint8_t kRule = spec::kRule;
