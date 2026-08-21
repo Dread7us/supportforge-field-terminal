@@ -8,6 +8,12 @@ namespace {
 constexpr uint8_t kGaugeAddress = 0x55;
 constexpr uint8_t kChargerAddress = 0x6B;
 constexpr uint8_t kStateOfChargeRegister = 0x2C;
+// BQ27220 standard commands used by LILYGO's read-only gauge path and TI's
+// public command table. These are observations only, never control subcommands.
+constexpr uint8_t kVoltageRegister = 0x08;
+constexpr uint8_t kRemainingCapacityRegister = 0x0C;
+constexpr uint8_t kFullChargeCapacityRegister = 0x12;
+constexpr uint8_t kAverageCurrentRegister = 0x14;
 constexpr uint8_t kChargerStatusRegister = 0x0B;
 constexpr uint8_t kChargeStatusMask = 0x18;
 constexpr uint8_t kVbusStatusMask = 0xE0;
@@ -51,6 +57,13 @@ bool readSoc(uint16_t& value) {
   return false;
 }
 
+bool readGaugeWord(uint8_t command, uint16_t& value) {
+  uint8_t data[2]{};
+  if (!readRegister(kGaugeAddress, command, data, sizeof(data))) return false;
+  value = decodeLittleEndianWord(data[0], data[1]);
+  return true;
+}
+
 bool readChargerStatus(uint8_t& value) {
   return readRegister(kChargerAddress, kChargerStatusRegister, &value, 1) ||
          readRegister(kChargerAddress, kChargerStatusRegister, &value, 1);
@@ -81,6 +94,16 @@ ChargerConnection classifyChargerConnection(uint8_t register0b) {
       ? ChargerConnection::Connected : ChargerConnection::NotConnected;
 }
 
+ChargePhase classifyChargePhase(uint8_t register0b) {
+  switch ((register0b & kChargeStatusMask) >> 3) {
+    case 0: return ChargePhase::NotCharging;
+    case 1: return ChargePhase::Precharge;
+    case 2: return ChargePhase::FastCharge;
+    case 3: return ChargePhase::Complete;
+  }
+  return ChargePhase::Unknown;
+}
+
 const char* chargerConnectionName(ChargerConnection value) {
   switch (value) {
     case ChargerConnection::Connected: return "CONNECTED";
@@ -88,6 +111,29 @@ const char* chargerConnectionName(ChargerConnection value) {
     case ChargerConnection::Unknown: return "VERIFICATION NEEDED";
   }
   return "VERIFICATION NEEDED";
+}
+
+const char* chargePhaseName(ChargePhase value) {
+  switch (value) {
+    case ChargePhase::NotCharging: return "NOT CHARGING";
+    case ChargePhase::Precharge: return "PRE-CHARGE";
+    case ChargePhase::FastCharge: return "FAST CHARGE";
+    case ChargePhase::Complete: return "COMPLETE";
+    case ChargePhase::Unknown: return "UNVERIFIED";
+  }
+  return "UNVERIFIED";
+}
+
+const char* diagnosisName(Diagnosis value) {
+  switch (value) {
+    case Diagnosis::BatteryNearReportedSoc: return "GAUGE REPORTS BATTERY NEAR SHOWN SOC";
+    case Diagnosis::ChargerNotContinuing: return "INPUT PRESENT; CHARGER NOT CONTINUING";
+    case Diagnosis::GaugeStale: return "GAUGE SOC IS STALE OR INVALID";
+    case Diagnosis::ChargeCompleteBelowThreshold: return "CHARGE COMPLETE BELOW 95%; VERIFY GAUGE MODEL";
+    case Diagnosis::GaugeModelNeedsVerification: return "GAUGE MODEL / BATTERY NEEDS VERIFICATION";
+    case Diagnosis::None: return "NO CONTRADICTION OBSERVED";
+  }
+  return "NO CONTRADICTION OBSERVED";
 }
 
 State reconcileStateOfCharge(State chargerState, bool socFresh, uint8_t percent) {
@@ -124,6 +170,7 @@ void BatteryManager::poll(uint32_t nowMs, bool gaugeObserved, bool chargerObserv
     snapshot_.percentAvailable = false;
     snapshot_.sampleValid = false;
     snapshot_.state = State::Stale;
+    snapshot_.diagnosis = Diagnosis::GaugeStale;
     ++snapshot_.version;
   }
   if (!scheduledAwake) return;
@@ -138,8 +185,14 @@ void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObse
   snapshot_.sampleAttempted = true;
   snapshot_.lastAttemptMs = nowMs;
   uint16_t soc = 0;
+  uint16_t voltage = 0, averageCurrent = 0, remainingCapacity = 0, fullChargeCapacity = 0;
   uint8_t chargerStatus = 0;
   const bool socValid = gaugeObserved && readSoc(soc);
+  const bool voltageValid = gaugeObserved && readGaugeWord(kVoltageRegister, voltage);
+  const bool currentValid = gaugeObserved && readGaugeWord(kAverageCurrentRegister, averageCurrent);
+  const bool remainingValid = gaugeObserved && readGaugeWord(kRemainingCapacityRegister, remainingCapacity);
+  const bool fullCapacityValid = gaugeObserved && readGaugeWord(kFullChargeCapacityRegister, fullChargeCapacity) &&
+      fullChargeCapacity > 0;
   const bool chargerValid = chargerObserved && readChargerStatus(chargerStatus);
   // SOC and charger status are independent read-only evidence. A failed charger
   // status read must never hide a valid gauge percentage or imply charging.
@@ -147,6 +200,14 @@ void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObse
   snapshot_.chargeStatusVerified = chargerValid;
   snapshot_.chargerConnection = chargerValid
       ? classifyChargerConnection(chargerStatus) : ChargerConnection::Unknown;
+  snapshot_.chargePhase = chargerValid ? classifyChargePhase(chargerStatus) : ChargePhase::Unknown;
+  snapshot_.voltageAvailable = voltageValid;
+  snapshot_.voltageMillivolts = voltageValid ? voltage : 0;
+  snapshot_.currentAvailable = currentValid;
+  snapshot_.averageCurrentMilliamps = currentValid ? static_cast<int16_t>(averageCurrent) : 0;
+  snapshot_.capacityAvailable = remainingValid && fullCapacityValid;
+  snapshot_.remainingCapacityMah = snapshot_.capacityAvailable ? remainingCapacity : 0;
+  snapshot_.fullChargeCapacityMah = snapshot_.capacityAvailable ? fullChargeCapacity : 0;
   if (socValid) {
     consecutiveSocFailures_ = 0;
     snapshot_.percentAvailable = true;
@@ -184,6 +245,20 @@ void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObse
   } else {
     snapshot_.state = chargerValid ? verifiedChargeState : State::Available;
   }
+  if (!socValid && !retainedPercentFresh) snapshot_.diagnosis = Diagnosis::GaugeStale;
+  else if (snapshot_.chargePhase == ChargePhase::Complete &&
+           snapshot_.percentAvailable && snapshot_.percent < nearFullThresholdPercent())
+    snapshot_.diagnosis = Diagnosis::ChargeCompleteBelowThreshold;
+  else if (snapshot_.chargerConnection == ChargerConnection::Connected &&
+           snapshot_.chargePhase == ChargePhase::NotCharging &&
+           snapshot_.percentAvailable && snapshot_.percent < nearFullThresholdPercent())
+    snapshot_.diagnosis = Diagnosis::ChargerNotContinuing;
+  else if (snapshot_.capacityAvailable && snapshot_.fullChargeCapacityMah &&
+           snapshot_.remainingCapacityMah * 100UL / snapshot_.fullChargeCapacityMah + 10 < snapshot_.percent)
+    snapshot_.diagnosis = Diagnosis::GaugeModelNeedsVerification;
+  else if (snapshot_.percentAvailable && snapshot_.percent < nearFullThresholdPercent())
+    snapshot_.diagnosis = Diagnosis::BatteryNearReportedSoc;
+  else snapshot_.diagnosis = Diagnosis::None;
   const bool recoveringSoc = gaugeObserved && !socValid;
   nextSampleMs_ = nowMs + (recoveringSoc ? kRecoverySampleIntervalMs :
       (snapshot_.state == State::Charging ? kChargingSampleIntervalMs : kNormalSampleIntervalMs));
@@ -192,7 +267,15 @@ void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObse
       (snapshot_.percentAvailable && before.percent != snapshot_.percent) ||
       before.sampleValid != snapshot_.sampleValid ||
       before.chargeStatusVerified != snapshot_.chargeStatusVerified ||
-      before.chargerConnection != snapshot_.chargerConnection) ++snapshot_.version;
+      before.chargerConnection != snapshot_.chargerConnection ||
+      before.chargePhase != snapshot_.chargePhase || before.diagnosis != snapshot_.diagnosis ||
+      before.voltageAvailable != snapshot_.voltageAvailable ||
+      (snapshot_.voltageAvailable && before.voltageMillivolts != snapshot_.voltageMillivolts) ||
+      before.currentAvailable != snapshot_.currentAvailable ||
+      (snapshot_.currentAvailable && before.averageCurrentMilliamps != snapshot_.averageCurrentMilliamps) ||
+      before.capacityAvailable != snapshot_.capacityAvailable ||
+      (snapshot_.capacityAvailable && (before.remainingCapacityMah != snapshot_.remainingCapacityMah ||
+       before.fullChargeCapacityMah != snapshot_.fullChargeCapacityMah))) ++snapshot_.version;
   // Diagnostics expose only bounded state names and validity flags. Raw charger
   // words, SOC values, device secrets, and user data are never emitted.
   Serial.printf("BATTERY read=%s soc_valid=%s charge_status_verified=%s charger_state=%s state=%s freshness=%s\n",

@@ -34,32 +34,6 @@ void line(uint8_t* fb, int x1, int y1, int x2, int y2, uint8_t color) {
   else epd_draw_line(x1 + 1, y1, x2 + 1, y2, color, fb);
 }
 
-Icon actionIcon(const String& raw) {
-  String label = raw;
-  label.toUpperCase();
-  if (label.indexOf("BACK") >= 0 || label.indexOf("CANCEL") >= 0 || label == "DEVICE")
-    return Icon::ChevronLeft;
-  if (label.indexOf("DELETE") >= 0 || label.indexOf("FORGET") >= 0 || label == "C")
-    return Icon::Close;
-  if (label.indexOf("REFRESH") >= 0 || label.indexOf("RETRY") >= 0 ||
-      label.indexOf("SYNC") >= 0 || label.indexOf("SCAN") >= 0 ||
-      label.indexOf("RECONNECT") >= 0 || label.indexOf("CLEAN") >= 0)
-    return Icon::Refresh;
-  if (label.indexOf("SETTING") >= 0 || label.indexOf("PREFERENCE") >= 0 ||
-      label.indexOf("MODE") >= 0 || label.indexOf("UNIT") >= 0 ||
-      label.indexOf("FORMAT") >= 0) return Icon::Settings;
-  if (label.indexOf("GPS") >= 0 || label.indexOf("POWER") >= 0 ||
-      label.indexOf("DISCONNECT") >= 0 || label.indexOf("OFF") >= 0 ||
-      label.indexOf("ON") >= 0) return Icon::Power;
-  if (label.indexOf("NETWORK") >= 0 || label.indexOf("SEARCH") >= 0)
-    return Icon::Search;
-  if (label.indexOf("SAVE") >= 0 || label.indexOf("CONFIRM") >= 0 ||
-      label.indexOf("SELECT") >= 0 || label.indexOf("NEXT") >= 0 ||
-      label.indexOf("OPEN") >= 0 || label.indexOf("DONE") >= 0)
-    return Icon::Check;
-  return Icon::ChevronRight;
-}
-
 int glyphIndex(char raw) {
   const unsigned char c = static_cast<unsigned char>(raw);
   return c >= 32 && c <= 126 ? c - 32 : '?' - 32;
@@ -115,7 +89,8 @@ int centeredBaseline(Rect bounds, FontRole role) {
   return bounds.y + (bounds.h + font.ascent - font.descent) / 2;
 }
 
-void actionButton(uint8_t* fb, Rect bounds, const String& label, bool selected) {
+void actionButton(uint8_t* fb, Rect bounds, const String& label, bool selected,
+                  Icon glyph, bool backLayout) {
   constexpr int kHorizontalPadding = 16;
   constexpr int kVerticalPadding = 10;
   static_assert(kVerticalPadding >= 8, "action labels require safe vertical padding");
@@ -126,8 +101,8 @@ void actionButton(uint8_t* fb, Rect bounds, const String& label, bool selected) 
   const Rect content{bounds.x + kHorizontalPadding, bounds.y + kVerticalPadding,
                      bounds.w - 2 * kHorizontalPadding,
                      bounds.h - 2 * kVerticalPadding};
-  // Character pads and calculator keys are already iconographic controls. All
-  // titled controls receive one universal leading icon in a fixed-size column.
+  // A compact character/operator label is itself the approved key graphic. All
+  // titled controls receive a visible leading monochrome icon in a fixed column.
   const bool compactKey = bounds.w <= 120 && label.length() <= 3;
   const int iconColumn = compactKey ? 0 : min(kIconBoxSize + kIconLabelGap, content.w / 4);
   const Rect labelContent{content.x + iconColumn, content.y,
@@ -143,10 +118,11 @@ void actionButton(uint8_t* fb, Rect bounds, const String& label, bool selected) 
   // the top row after generated-font metric changes.
   if (!compactKey) {
     const uint8_t foreground = selected ? kPaper : kInk;
-    icon(fb, actionIcon(label), content.x + kIconBoxSize / 2,
+    icon(fb, glyph, content.x + kIconBoxSize / 2,
          content.y + content.h / 2, 20, foreground);
   }
-  text(fb, labelContent, x, centeredBaseline(content, role), shown, role,
+  const int labelX = backLayout ? labelContent.x : x;
+  text(fb, labelContent, labelX, centeredBaseline(content, role), shown, role,
        selected ? kPaper : kInk);
 }
 
@@ -221,13 +197,60 @@ void icon(uint8_t* fb, Icon value, int cx, int cy, int s, uint8_t color) {
       epd_draw_hline(cx-h-3,cy,5,color,fb); epd_draw_hline(cx+h-2,cy,5,color,fb);
       epd_draw_vline(cx,cy-h-3,5,color,fb); epd_draw_vline(cx,cy+h-2,5,color,fb); break;
     case Icon::Power:
-      epd_draw_circle(cx,cy+2,h-2,color,fb); epd_fill_rect({cx-2,cy-h-2,5,h+2},kPaper,fb);
+      epd_draw_circle(cx,cy+2,h-2,color,fb);
+      epd_fill_rect({cx-2,cy-h-2,5,h+2},color==kPaper?kInk:kPaper,fb);
       line(fb,cx,cy-h,cx,cy+1,color); break;
     case Icon::Search:
       epd_draw_circle(cx-2,cy-2,h-3,color,fb); line(fb,cx+h/3,cy+h/3,cx+h,cy+h,color); break;
     case Icon::Close:
       line(fb,cx-h,cy-h,cx+h,cy+h,color); line(fb,cx+h,cy-h,cx-h,cy+h,color); break;
+    case Icon::Clock:
+      epd_draw_circle(cx,cy,h,color,fb); line(fb,cx,cy,cx,cy-h+3,color); line(fb,cx,cy,cx+h-3,cy,color); break;
+    case Icon::Calculator:
+      epd_draw_rect({cx-h,cy-h,s,s},color,fb); epd_draw_hline(cx-h+3,cy-h+6,s-6,color,fb);
+      epd_fill_circle(cx-5,cy+3,2,color,fb); epd_fill_circle(cx+5,cy+3,2,color,fb); break;
+    case Icon::Display:
+      epd_draw_rect({cx-h,cy-h+2,s,s-5},color,fb); line(fb,cx-5,cy+h,cx+5,cy+h,color); break;
+    case Icon::Weather:
+      epd_draw_circle(cx-4,cy-3,h/2,color,fb); epd_fill_circle(cx-4,cy-3,h/3,color,fb);
+      line(fb,cx-8,cy+h/2,cx+h,cy+h/2,color); break;
+    case Icon::Cleanup:
+      epd_draw_rect({cx-h,cy-h/2,s,h},color,fb); line(fb,cx-h,cy+h,cx+h,cy-h,color); break;
+    case Icon::Diagnostics:
+      epd_draw_circle(cx,cy,h,color,fb); line(fb,cx-h,cy,cx+h,cy,color); line(fb,cx,cy-h,cx,cy+h,color); break;
+    case Icon::Keyboard:
+      epd_draw_rect({cx-h,cy-h/2,s,h},color,fb); for(int x=cx-h+4;x<cx+h-2;x+=5)epd_fill_rect({x,cy-3,2,2},color,fb); break;
+    case Icon::Delete:
+      line(fb,cx-h,cy,cx-h/2,cy-h/2,color); line(fb,cx-h/2,cy-h/2,cx+h,cy-h/2,color);
+      line(fb,cx+h,cy-h/2,cx+h,cy+h/2,color); line(fb,cx+h,cy+h/2,cx-h/2,cy+h/2,color); break;
+    case Icon::Light:
+      epd_draw_circle(cx,cy,h/2,color,fb); for(int i=-1;i<=1;i+=2){line(fb,cx+i*h,cy,cx+i*(h-4),cy,color);line(fb,cx,cy+i*h,cx,cy+i*(h-4),color);} break;
+    case Icon::Units:
+      line(fb,cx-h,cy+h/2,cx+h,cy+h/2,color); for(int x=cx-h;x<=cx+h;x+=h/2)line(fb,x,cy+h/2,x,cy,color); break;
+    case Icon::Privacy:
+      epd_draw_circle(cx,cy,h-2,color,fb); epd_fill_circle(cx,cy,3,color,fb); line(fb,cx-h,cy+h,cx+h,cy-h,color); break;
+    case Icon::Touch:
+      epd_draw_circle(cx,cy-h/3,h/3,color,fb); line(fb,cx,cy,cx,cy+h,color); line(fb,cx,cy+h,cx+h,cy+h/2,color); break;
+    case Icon::Next:
+      line(fb,cx-h,cy-h,cx,cy,color); line(fb,cx,cy,cx-h,cy+h,color); line(fb,cx+2,cy-h,cx+h,cy,color); line(fb,cx+h,cy,cx+2,cy+h,color); break;
+    case Icon::Save:
+      epd_draw_rect({cx-h,cy-h,s,s},color,fb); epd_draw_rect({cx-h+4,cy-h+3,s-8,h/2},color,fb); epd_fill_circle(cx,cy+h/2,3,color,fb); break;
   }
+}
+
+void selectableCard(uint8_t* fb, Rect b, const String& title,
+                    const String& detail, const String& secondary,
+                    bool selected, Icon glyph) {
+  const uint8_t fg=selected?kPaper:kInk;
+  roundedRect(fb,b,12,selected?kInk:kPaper,kInk);
+  icon(fb,glyph,b.x+34,b.y+34,24,fg);
+  const Rect titleBounds{b.x+62,b.y+12,b.w-82,34};
+  text(fb,titleBounds,titleBounds.x,centeredBaseline(titleBounds,FontRole::CardHeading),
+       fittedText(title,FontRole::CardHeading,titleBounds.w),FontRole::CardHeading,fg);
+  text(fb,{b.x+20,b.y+56,b.w-40,28},b.x+20,b.y+78,
+       fittedText(detail,FontRole::Body,b.w-40),FontRole::Body,fg);
+  text(fb,{b.x+20,b.y+88,b.w-40,28},b.x+20,b.y+110,
+       fittedText(secondary,FontRole::Caption,b.w-40),FontRole::Caption,fg);
 }
 
 void batteryIcon(uint8_t* fb, Rect bounds, battery::State state,
@@ -286,7 +309,10 @@ void wifiIcon(uint8_t* fb, Rect bounds, network::State state,
   epd_fill_rect({bounds.x,bounds.y,bounds.w,bounds.h},kPaper,fb);
   constexpr int kBarCount=4,kBarWidth=4,kBarGap=3;
   const int totalWidth=kBarCount*kBarWidth+(kBarCount-1)*kBarGap;
-  const int left=bounds.x+(bounds.w-totalWidth)/2,bottom=spec::kHeaderBaseline+2;
+  constexpr int kTallestBarHeight=22;
+  const int left=bounds.x+(bounds.w-totalWidth)/2;
+  const int sharedCenterY=bounds.y+bounds.h/2;
+  const int bottom=sharedCenterY+kTallestBarHeight/2;
   int bars=0;
   if(state==network::State::Connected&&rssiAvailable){
     bars=rssi>=-55?4:(rssi>=-67?3:(rssi>=-78?2:1));
@@ -461,7 +487,7 @@ void dialog(uint8_t* fb, Rect b, const String& title, const String& body,
                 "dialog action must meet the minimum touch target");
   const Rect action{b.x + 24, b.y + b.h - kDialogBottomPadding - kDialogActionHeight,
                     b.w - 48, kDialogActionHeight};
-  actionButton(fb, action, actionLabel, true);
+  actionButton(fb, action, actionLabel, true, Icon::Check);
 }
 
 Rect navigationTarget(Page page) {

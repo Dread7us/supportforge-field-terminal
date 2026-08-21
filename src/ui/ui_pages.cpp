@@ -67,11 +67,21 @@ const char* batterySocFreshness(const UiSnapshot& s) {
 }
 
 const char* batteryChargeInterpretation(const UiSnapshot& s) {
-  if (!s.batteryChargeStatusVerified || s.batteryState == battery::State::Verifying)
-    return "VERIFICATION NEEDED";
-  if (s.batteryState == battery::State::Full) return "COMPLETE";
-  if (s.batteryState == battery::State::Charging) return "CHARGING";
-  return "NOT CHARGING";
+  if (!s.batteryChargeStatusVerified) return "VERIFICATION NEEDED";
+  return battery::chargePhaseName(s.batteryChargePhase);
+}
+
+String batteryElectrical(const UiSnapshot& s) {
+  if (!s.batteryVoltageAvailable && !s.batteryCurrentAvailable) return "--";
+  String result = s.batteryVoltageAvailable ? String(s.batteryVoltageMillivolts) + " MV" : "-- MV";
+  result += " / ";
+  result += s.batteryCurrentAvailable ? String(s.batteryAverageCurrentMilliamps) + " MA" : "-- MA";
+  return result;
+}
+
+String batteryCapacity(const UiSnapshot& s) {
+  return s.batteryCapacityAvailable ? String(s.batteryRemainingCapacityMah) + " / " +
+      String(s.batteryFullChargeCapacityMah) + " MAH" : "--";
 }
 
 String weatherTemperature(const UiSnapshot& s) {
@@ -182,7 +192,7 @@ void centeredText(uint8_t* fb,Rect bounds,const String& value,FontRole role,uint
   text(fb,bounds,max(bounds.x,x),centeredBaseline(bounds,role),shown,role,color);
 }
 
-void detailBack(uint8_t* fb){ actionButton(fb,kDetailBackAction,"BACK"); }
+void detailBack(uint8_t* fb){ actionButton(fb,kDetailBackAction,"BACK",false,Icon::ChevronLeft,true); }
 
 String fixAge(const location::Snapshot& gps){
   return gps.fixAgeMs==UINT32_MAX?"--":String(gps.fixAgeMs/1000)+" SEC";
@@ -294,7 +304,7 @@ void weatherDetail(uint8_t* fb,const UiSnapshot& s){
   labeledRow(fb,{48,538,444,46},"WIND",s.weather.windAvailable?String(s.weather.windSpeedTenths/10.0f,1)+" MPH / "+String(s.weather.windDirectionDegrees)+" DEG":"--");
   labeledRow(fb,{48,584,444,36},"PRECIP CHANCE",weatherValue(s.weather.precipitationAvailable,s.weather.precipitationPercent,"%"),false);
   labeledRow(fb,{48,638,444,40},"UPDATED",s.weather.lastSuccessMs?age(millis(),s.weather.lastSuccessMs):"--",false);
-  actionButton(fb,kWeatherDetailSetupAction,"WEATHER SETTINGS");detailBack(fb);
+  actionButton(fb,kWeatherDetailSetupAction,"WEATHER SETTINGS",false,Icon::Weather);detailBack(fb);
 }
 
 void batteryDetail(uint8_t* fb,const UiSnapshot& s){
@@ -303,12 +313,14 @@ void batteryDetail(uint8_t* fb,const UiSnapshot& s){
   centeredText(fb,{24,128,492,94},primary,FontRole::PageHeading);
   centeredText(fb,{24,214,492,40},batteryChargeInterpretation(s),FontRole::CardHeading);
   batteryIcon(fb,{90,294,360,124},s.batteryState,s.batteryPercentAvailable,s.batteryPercent,kInk);
-  roundedRect(fb,{24,462,492,226},14,kPaper,kInk);
-  labeledRow(fb,{48,476,444,40},"PERCENTAGE",primary);
-  labeledRow(fb,{48,516,444,40},"SOC QUALITY",batterySocFreshness(s));
-  labeledRow(fb,{48,556,444,40},"GAUGE UPDATE",s.batteryLastSampleMs?age(millis(),s.batteryLastSampleMs):"--");
-  labeledRow(fb,{48,596,444,40},"CHARGER",battery::chargerConnectionName(s.batteryChargerConnection));
-  labeledRow(fb,{48,636,444,40},"CHARGE STATE",batteryChargeInterpretation(s),false);
+  roundedRect(fb,{24,438,492,300},14,kPaper,kInk);
+  labeledRow(fb,{48,448,444,38},"PERCENT / QUALITY",primary+" / "+batterySocFreshness(s));
+  labeledRow(fb,{48,486,444,38},"GAUGE UPDATE",s.batteryLastSampleMs?age(millis(),s.batteryLastSampleMs):"--");
+  labeledRow(fb,{48,524,444,38},"CHARGER INPUT",battery::chargerConnectionName(s.batteryChargerConnection));
+  labeledRow(fb,{48,562,444,38},"CHARGE STATE",batteryChargeInterpretation(s));
+  labeledRow(fb,{48,600,444,38},"VOLTAGE / CURRENT",batteryElectrical(s));
+  labeledRow(fb,{48,638,444,38},"REMAIN / FULL",batteryCapacity(s));
+  labeledRow(fb,{48,676,444,48},"EXPLANATION",battery::diagnosisName(s.batteryDiagnosis),false);
   detailBack(fb);
 }
 
@@ -356,7 +368,7 @@ void altimeter(uint8_t* fb,const UiSnapshot& s){
              s.location.altitudeValid?hdopQuality(s.location):"--");
   labeledRow(fb,{48,596,444,48},"FRESHNESS",elevationFreshness(s.location),false);
   actionButton(fb,kAltimeterUnitAction,
-               String("UNIT ")+location::elevationPreferenceName(s.location.elevationUnit));
+               String("UNIT ")+location::elevationPreferenceName(s.location.elevationUnit),false,Icon::Units);
   detailBack(fb);
 }
 
@@ -438,7 +450,7 @@ void systems(uint8_t* fb,const UiSnapshot& s){
     labeledRow(fb,{44,416,452,48},"PROVIDER",t.speedTest.provider.available?t.speedTest.provider.value:"--",false);
     card(fb,c[1],"DATA FRESHNESS",age(millis(),t.lastSuccessMs),telemetry::endpointName(t.activeEndpoint));
   }
-  actionButton(fb,kSystemsSectionAction,String("NEXT SECTION: ")+sections[(section+1)%4]);
+  actionButton(fb,kSystemsSectionAction,String("NEXT SECTION: ")+sections[(section+1)%4],false,Icon::Next);
 }
 
 void radioPage(uint8_t* fb,const UiSnapshot& s){
@@ -466,11 +478,11 @@ void location(uint8_t* fb,const UiSnapshot& s){
   if(s.location.showCoordinates&&s.location.fixValid)position=String(s.location.latitude,4)+", "+String(s.location.longitude,4);
   if(s.location.showCoordinates&&s.location.fixValid)labeledRow(fb,{44,520,452,38},"COORDINATES",position,false);
   else labeledRow(fb,{44,520,452,38},"COORDINATES","PRIVATE",false);
-  actionButton(fb,kLocationGpsPowerAction,s.location.state==location::GpsState::Off?"START GPS":"STOP GPS");
-  actionButton(fb,kLocationSpeedUnitAction,String("UNIT ")+location::speedUnitName(s.location.speedUnit));
-  actionButton(fb,kLocationPrivacyAction,s.location.showCoordinates?"HIDE COORDS":"SHOW COORDS");
-  actionButton(fb,kLocationWeatherSetupAction,"WEATHER SETUP");
-  actionButton(fb,kLocationWeatherRefreshAction,"REFRESH WEATHER NOW");
+  actionButton(fb,kLocationGpsPowerAction,s.location.state==location::GpsState::Off?"START GPS":"STOP GPS",false,Icon::Location);
+  actionButton(fb,kLocationSpeedUnitAction,String("UNIT ")+location::speedUnitName(s.location.speedUnit),false,Icon::Units);
+  actionButton(fb,kLocationPrivacyAction,s.location.showCoordinates?"HIDE COORDS":"SHOW COORDS",false,Icon::Privacy);
+  actionButton(fb,kLocationWeatherSetupAction,"WEATHER SETUP",false,Icon::Weather);
+  actionButton(fb,kLocationWeatherRefreshAction,"REFRESH WEATHER NOW",false,Icon::Refresh);
 }
 
 void device(uint8_t* fb,const UiSnapshot& s){
@@ -481,13 +493,13 @@ void device(uint8_t* fb,const UiSnapshot& s){
   roundedRect(fb,c[2],12,kPaper,kRule);
   labeledRow(fb,{44,282,452,52},"ENDPOINT",telemetry::endpointName(s.telemetry.activeEndpoint)); labeledRow(fb,{44,334,452,52},"LAST TELEMETRY",age(millis(),s.telemetry.lastSuccessMs));
   labeledRow(fb,{44,386,452,52},"REFRESH INTERVAL","60 SEC"); labeledRow(fb,{44,438,452,64},"TEMPERATURE",s.telemetry.displayTemperatureUnit==appconfig::TemperatureUnit::Celsius?"CELSIUS":"FAHRENHEIT",false);
-  actionButton(fb,kDeviceDiagnosticsAction,"DIAGNOSTICS");
-  actionButton(fb,kDeviceLowPowerAction,"LOW POWER");
+  actionButton(fb,kDeviceDiagnosticsAction,"DIAGNOSTICS",false,Icon::Diagnostics);
+  actionButton(fb,kDeviceLowPowerAction,"LOW POWER",false,Icon::Power);
   const String cleanupLabel=s.manualRefreshRateLimited?
       String("DISPLAY CLEANUP AVAILABLE IN ")+String(s.manualRefreshRemainingSeconds)+" SECONDS":
       String("CLEAN DISPLAY");
-  actionButton(fb,kDeviceDisplayRefreshAction,cleanupLabel,!s.manualRefreshRateLimited);
-  actionButton(fb,kDeviceSettingsAction,"MAIN SETTINGS");
+  actionButton(fb,kDeviceDisplayRefreshAction,cleanupLabel,!s.manualRefreshRateLimited,Icon::Cleanup);
+  actionButton(fb,kDeviceSettingsAction,"MAIN SETTINGS",false,Icon::Settings);
 }
 
 void diagnostics(uint8_t* fb,const UiSnapshot& s){
@@ -653,7 +665,10 @@ void settings(uint8_t* fb,const UiSnapshot& s){
   const char* labels[]={"WI-FI","DATE & TIME","DISPLAY","UNITS","WEATHER",
       "LOCATION & PRIVACY","LOW POWER","TOUCH","ABOUT / DIAGNOSTICS",
       "CALCULATOR","BACK"};
-  for(uint8_t i=0;i<11;++i)actionButton(fb,kSettingsCategoryActions[i],labels[i],i==0&&s.wifi.state==network::State::SetupRequired);
+  const Icon glyphs[]={Icon::Wifi,Icon::Clock,Icon::Display,Icon::Units,Icon::Weather,
+      Icon::Privacy,Icon::Power,Icon::Touch,Icon::Diagnostics,Icon::Calculator,Icon::ChevronLeft};
+  for(uint8_t i=0;i<11;++i)actionButton(fb,kSettingsCategoryActions[i],labels[i],
+      i==0&&s.wifi.state==network::State::SetupRequired,glyphs[i],i==10);
 }
 
 void displaySettings(uint8_t* fb,const UiSnapshot& s){
@@ -669,7 +684,7 @@ void displaySettings(uint8_t* fb,const UiSnapshot& s){
       const bool selected=s.frontLight.preferred==levels[i];
       String label=power::frontLightLevelName(levels[i]);
       if(selected)label+=" - SAVED";
-      actionButton(fb,kDisplayFrontLightActions[i],label,selected);
+      actionButton(fb,kDisplayFrontLightActions[i],label,selected,Icon::Light);
     }
     const String effective=s.frontLight.lowPowerSuppressed?"OFF - LOW POWER":
         String(power::frontLightLevelName(s.frontLight.effective));
@@ -678,33 +693,33 @@ void displaySettings(uint8_t* fb,const UiSnapshot& s){
          FontRole::Caption,kInk);
   }
   actionButton(fb,kDisplayRefreshSettingsAction,
-               String("REFRESH MODE: ")+refreshModeName(s.refreshMode));
-  actionButton(fb,kDisplaySettingsBackAction,"BACK");
+               String("REFRESH MODE: ")+refreshModeName(s.refreshMode),false,Icon::Display);
+  actionButton(fb,kDisplaySettingsBackAction,"BACK",false,Icon::ChevronLeft,true);
 }
 
 void dateTimeSettings(uint8_t* fb,const UiSnapshot& s){
   appBar(fb,s,"DATE & TIME");
   card(fb,{24,112,492,146},"LAST SYNCHRONIZATION",s.rtcValid?lastTimeSync(s):"TIME SYNC REQUIRED",device_time::syncStateName(s.timeSyncState));
-  actionButton(fb,kDateTimeTimezoneAction,String("TIMEZONE: ")+device_time::timezoneLabel(s.timezoneIndex));
-  actionButton(fb,kDateTimeFormatAction,s.use24Hour?"FORMAT: 24 HOUR":"FORMAT: 12 HOUR");
-  actionButton(fb,kDateTimeSyncAction,"SYNC TIME NOW");
+  actionButton(fb,kDateTimeTimezoneAction,String("TIMEZONE: ")+device_time::timezoneLabel(s.timezoneIndex),false,Icon::Location);
+  actionButton(fb,kDateTimeFormatAction,s.use24Hour?"FORMAT: 24 HOUR":"FORMAT: 12 HOUR",false,Icon::Clock);
+  actionButton(fb,kDateTimeSyncAction,"SYNC TIME NOW",false,Icon::Refresh);
   detailBack(fb);
 }
 
 void unitsSettings(uint8_t* fb,const UiSnapshot& s){
   appBar(fb,s,"UNITS");
-  actionButton(fb,kUnitsTemperatureAction,s.telemetry.displayTemperatureUnit==appconfig::TemperatureUnit::Celsius?"TEMPERATURE: CELSIUS":"TEMPERATURE: FAHRENHEIT");
-  actionButton(fb,kUnitsSpeedAction,String("SPEED: ")+location::speedUnitName(s.location.speedUnit));
-  actionButton(fb,kUnitsElevationAction,String("ELEVATION: ")+location::elevationPreferenceName(s.location.elevationUnit));
+  actionButton(fb,kUnitsTemperatureAction,s.telemetry.displayTemperatureUnit==appconfig::TemperatureUnit::Celsius?"TEMPERATURE: CELSIUS":"TEMPERATURE: FAHRENHEIT",false,Icon::Units);
+  actionButton(fb,kUnitsSpeedAction,String("SPEED: ")+location::speedUnitName(s.location.speedUnit),false,Icon::Units);
+  actionButton(fb,kUnitsElevationAction,String("ELEVATION: ")+location::elevationPreferenceName(s.location.elevationUnit),false,Icon::Units);
   detailBack(fb);
 }
 
 void locationPrivacySettings(uint8_t* fb,const UiSnapshot& s){
   appBar(fb,s,"LOCATION & PRIVACY");
   card(fb,{24,128,492,150},"GPS RECEIVER",location::stateName(s.location.state),"GPS remains receive-only");
-  actionButton(fb,kLocationSettingsGpsAction,s.location.state==location::GpsState::Off?"START GPS":"STOP GPS");
-  actionButton(fb,kLocationSettingsPrivacyAction,s.location.showCoordinates?"COORDINATES: VISIBLE":"COORDINATES: PRIVATE",s.location.showCoordinates);
-  actionButton(fb,kLocationSettingsWeatherAction,"WEATHER LOCATION SETUP");
+  actionButton(fb,kLocationSettingsGpsAction,s.location.state==location::GpsState::Off?"START GPS":"STOP GPS",false,Icon::Location);
+  actionButton(fb,kLocationSettingsPrivacyAction,s.location.showCoordinates?"COORDINATES: VISIBLE":"COORDINATES: PRIVATE",s.location.showCoordinates,Icon::Privacy);
+  actionButton(fb,kLocationSettingsWeatherAction,"WEATHER LOCATION SETUP",false,Icon::Weather);
   detailBack(fb);
 }
 
@@ -712,13 +727,13 @@ void wifiSettings(uint8_t* fb,const UiSnapshot& s){
   appBar(fb,s,"WI-FI");
   card(fb,{24,104,492,126},"CONNECTION",network::stateName(s.wifi.state),
        s.wifi.ssidAvailable?s.wifi.ssid:"NO NETWORK CONFIGURED");
-  actionButton(fb,kWifiScanAction,s.wifi.scanState==network::ScanState::Scanning?"SCANNING...":"SCAN NETWORKS");
-  actionButton(fb,kWifiManualAction,"MANUAL NETWORK");
-  actionButton(fb,kWifiDisconnectAction,"DISCONNECT");
-  actionButton(fb,kWifiReconnectAction,"RECONNECT");
-  actionButton(fb,kWifiForgetAction,s.wifi.userConfigured?"FORGET SAVED NETWORK":"NO USER NETWORK TO FORGET");
+  actionButton(fb,kWifiScanAction,s.wifi.scanState==network::ScanState::Scanning?"SCANNING...":"SCAN NETWORKS",false,Icon::Search);
+  actionButton(fb,kWifiManualAction,"MANUAL NETWORK",false,Icon::Keyboard);
+  actionButton(fb,kWifiDisconnectAction,"DISCONNECT",false,Icon::Power);
+  actionButton(fb,kWifiReconnectAction,"RECONNECT",false,Icon::Refresh);
+  actionButton(fb,kWifiForgetAction,s.wifi.userConfigured?"FORGET SAVED NETWORK":"NO USER NETWORK TO FORGET",false,Icon::Delete);
   text(fb,{24,494,492,56},24,520,"First boot requires local setup. Saved credentials stay on this device.",FontRole::Caption,kInk);
-  actionButton(fb,kWifiBackAction,"BACK");
+  actionButton(fb,kWifiBackAction,"BACK",false,Icon::ChevronLeft,true);
 }
 
 void wifiNetworks(uint8_t* fb,const UiSnapshot& s){
@@ -733,9 +748,9 @@ void wifiNetworks(uint8_t* fb,const UiSnapshot& s){
     centeredText(fb,{24,300,492,80},"RADIO SCAN FAILED - BACK AND RETRY",FontRole::Body);
   for(uint8_t i=0;i<s.wifi.resultCount&&i<network::kMaximumScanResults;++i){
     const network::ScanResult&r=s.wifi.results[i];
-    actionButton(fb,kWifiNetworkActions[i],String(r.secure?"[LOCK] ":"[OPEN] ")+r.ssid+"  "+String(r.rssi)+" DBM");
+    actionButton(fb,kWifiNetworkActions[i],String(r.secure?"[LOCK] ":"[OPEN] ")+r.ssid+"  "+String(r.rssi)+" DBM",false,r.secure?Icon::Lock:Icon::Wifi);
   }
-  actionButton(fb,kWifiBackAction,"BACK");
+  actionButton(fb,kWifiBackAction,"BACK",false,Icon::ChevronLeft,true);
 }
 
 void wifiEntry(uint8_t* fb,const UiSnapshot& s){
@@ -748,24 +763,24 @@ void wifiEntry(uint8_t* fb,const UiSnapshot& s){
   // all 24 visible keys on every page have a valid matching route character.
   const char* pages[]={"ABCDEFGHIJKLMNOPQRSTUVWX","YZabcdefghijklmnopqrstuv","wxyz0123456789!\"#$%&'()","*+,-./:;<=>?@[\\]^_`{|}~  "};
   const char* chars=pages[s.wifiKeyboardPage%4];
-  for(uint8_t i=0;i<24;++i){String key=String(chars[i]);actionButton(fb,kWifiEntryKeys[i],key,s.wifiEditingPassword);}
-  actionButton(fb,kWifiEntryModeAction,s.wifiEditingPassword?"PASSWORD":"SSID");
-  actionButton(fb,kWifiEntryDeleteAction,"BACKSPACE");
-  actionButton(fb,kWifiEntryNextAction,"MORE KEYS");
-  actionButton(fb,kWifiEntryCancelAction,"CANCEL");
-  actionButton(fb,kWifiEntrySaveAction,"SAVE & CONNECT",true);
+  for(uint8_t i=0;i<24;++i){String key=String(chars[i]);actionButton(fb,kWifiEntryKeys[i],key,s.wifiEditingPassword,Icon::Keyboard);}
+  actionButton(fb,kWifiEntryModeAction,s.wifiEditingPassword?"PASSWORD":"SSID",false,Icon::Keyboard);
+  actionButton(fb,kWifiEntryDeleteAction,"BACKSPACE",false,Icon::Delete);
+  actionButton(fb,kWifiEntryNextAction,"MORE KEYS",false,Icon::Next);
+  actionButton(fb,kWifiEntryCancelAction,"CANCEL",false,Icon::Close);
+  actionButton(fb,kWifiEntrySaveAction,"SAVE & CONNECT",true,Icon::Save);
 }
 
 void wifiForgetConfirm(uint8_t* fb,const UiSnapshot& s){
   appBar(fb,s,"FORGET NETWORK");
   card(fb,{24,176,492,310},"DELIBERATE CONFIRMATION","FORGET USER-SAVED WI-FI?","The terminal will return to SETUP REQUIRED.");
-  actionButton(fb,kWifiEntryCancelAction,"CANCEL");
-  actionButton(fb,kWifiEntrySaveAction,"CONFIRM FORGET",true);
+  actionButton(fb,kWifiEntryCancelAction,"CANCEL",false,Icon::Close);
+  actionButton(fb,kWifiEntrySaveAction,"CONFIRM FORGET",true,Icon::Delete);
 }
 
 void calculatorPage(uint8_t* fb,const UiSnapshot&s){
   text(fb,{24,14,492,44},24,48,"CALCULATOR",FontRole::PageHeading,kInk);
-  actionButton(fb,kCalculatorBackAction,"BACK");
+  actionButton(fb,kCalculatorBackAction,"BACK",false,Icon::ChevronLeft,true);
   const Rect display{24,144,492,176};
   epd_fill_rect({display.x,display.y,display.w,display.h},kPaper,fb);
   roundedRect(fb,display,14,kPaper,kInk);
@@ -775,24 +790,21 @@ void calculatorPage(uint8_t* fb,const UiSnapshot&s){
   const int x=display.x+display.w-20-textWidth(shown,FontRole::PageHeading);
   text(fb,{display.x+20,display.y+20,display.w-40,display.h-40},max(display.x+20,x),centeredBaseline({display.x+20,display.y+20,display.w-40,display.h-40},FontRole::PageHeading),shown,FontRole::PageHeading,kInk);
   const char* labels[]={"7","8","9","/","4","5","6","*","1","2","3","-","0",".","+","=","C","DEL","+/-"};
-  for(uint8_t i=0;i<19;++i)actionButton(fb,kCalculatorKeys[i],labels[i],i==15);
+  for(uint8_t i=0;i<19;++i)actionButton(fb,kCalculatorKeys[i],labels[i],i==15,Icon::Calculator);
 }
 
 void displayRefreshMode(uint8_t* fb,const UiSnapshot& s){
   appBar(fb,s,"DISPLAY REFRESH MODE");
   text(fb,{24,112,492,44},24,142,"SELECT QUALITY VERSUS SPEED",FontRole::CardHeading,kInk);
   const char* titles[]={"QUICK","BALANCED","BEAUTIFUL"};
-  const char* line1[]={"GC16 only; cleanup is always manual.","GC16 with bounded recovery cleanup.","GC16 with rare cooldown-guarded cleanup."};
-  const char* line2[]={"Use CLEAN DISPLAY on Device when needed.","In-place telemetry uses one normal GC16.","Cleanest appearance; slower and more power."};
+  const char* line1[]={"Physical cleanup on every page change.","Physical cleanup on every page change.","Physical cleanup on every page change."};
+  const char* line2[]={"Fastest in-page GC16; no ghosting accepted.","In-page telemetry uses one normal GC16.","Quality priority; transitions remain bounded."};
   for(uint8_t i=0;i<3;++i){
     const Rect b=kRefreshModeActions[i];const bool selected=static_cast<uint8_t>(s.refreshMode)==i;
-    roundedRect(fb,b,12,selected?kInk:kPaper,kInk);const uint8_t fg=selected?kPaper:kInk;
     const String title=selected?String(titles[i])+" - SELECTED":String(titles[i]);
-    text(fb,{b.x+18,b.y+14,b.w-36,30},b.x+18,b.y+38,title,FontRole::CardHeading,fg);
-    text(fb,{b.x+20,b.y+62,b.w-40,28},b.x+20,b.y+84,line1[i],FontRole::Body,fg);
-    text(fb,{b.x+20,b.y+94,b.w-40,28},b.x+20,b.y+116,line2[i],FontRole::Caption,fg);
+    selectableCard(fb,b,title,line1[i],line2[i],selected,Icon::Display);
   }
-  actionButton(fb,kRefreshModeBackAction,"BACK");
+  actionButton(fb,kRefreshModeBackAction,"BACK",false,Icon::ChevronLeft,true);
 }
 
 void timezoneSetup(uint8_t* fb,const UiSnapshot& s){
@@ -800,13 +812,10 @@ void timezoneSetup(uint8_t* fb,const UiSnapshot& s){
   text(fb,{24,102,492,30},24,126,"SELECT LOCAL TIMEZONE",FontRole::CardHeading,kInk);
   for(uint8_t i=0;i<device_time::timezoneCount();++i){
     const Rect b=kTimezoneActions[i];
-    roundedRect(fb,b,10,i==s.timezoneIndex?kInk:kPaper,kInk);
-    const uint8_t fg=i==s.timezoneIndex?kPaper:kInk;
-    text(fb,{b.x+20,b.y+14,b.w-150,34},b.x+20,b.y+40,device_time::timezoneLabel(i),FontRole::CardHeading,fg);
-    text(fb,{b.x+20,b.y+52,b.w-40,28},b.x+20,b.y+74,device_time::timezoneDescription(i),FontRole::Caption,fg);
-    text(fb,{b.x+b.w-112,b.y+14,88,30},b.x+b.w-112,b.y+38,i==s.timezoneIndex?"SELECTED":"SELECT",FontRole::Caption,fg);
+    selectableCard(fb,b,device_time::timezoneLabel(i),device_time::timezoneDescription(i),
+                   i==s.timezoneIndex?"SELECTED":"SELECT",i==s.timezoneIndex,Icon::Location);
   }
-  actionButton(fb,kTimezoneBackAction,"BACK");
+  actionButton(fb,kTimezoneBackAction,"BACK",false,Icon::ChevronLeft,true);
 }
 
 void lowPowerSetup(uint8_t* fb,const UiSnapshot& s){
@@ -815,9 +824,9 @@ void lowPowerSetup(uint8_t* fb,const UiSnapshot& s){
   const power::Preset presets[]={power::Preset::Off,power::Preset::Min5,power::Preset::Min15,power::Preset::Min30,power::Preset::Min60};
   for(uint8_t i=0;i<5;++i){
     const bool selected=s.lowPower.preset==presets[i];
-    actionButton(fb,kLowPowerPresetActions[i],String(i?"CHECK EVERY ":"MODE ")+power::presetName(presets[i]),selected);
+    actionButton(fb,kLowPowerPresetActions[i],String(i?"CHECK EVERY ":"MODE ")+power::presetName(presets[i]),selected,Icon::Power);
   }
-  actionButton(fb,kLowPowerBackAction,"BACK");
+  actionButton(fb,kLowPowerBackAction,"BACK",false,Icon::ChevronLeft,true);
 }
 
 void lowPowerStatus(uint8_t* fb,const UiSnapshot& s){
@@ -830,8 +839,8 @@ void lowPowerStatus(uint8_t* fb,const UiSnapshot& s){
   labeledRow(fb,{48,442,444,64},"DISPLAY","HV OFF AFTER GC16");
   labeledRow(fb,{48,506,444,64},"TOUCH","EXIT AVAILABLE");
   labeledRow(fb,{48,570,444,38},"SLEEP TYPE","TIMER MONITORING",false);
-  actionButton(fb,kLowPowerExitAction,"EXIT LOW POWER",true);
-  actionButton(fb,kLowPowerBackAction,"DEVICE");
+  actionButton(fb,kLowPowerExitAction,"EXIT LOW POWER",true,Icon::Power);
+  actionButton(fb,kLowPowerBackAction,"DEVICE",false,Icon::Device);
 }
 
 void touchRecalibrateConfirm(uint8_t* fb,const UiSnapshot& s){
@@ -844,53 +853,55 @@ void touchRecalibrateConfirm(uint8_t* fb,const UiSnapshot& s){
   text(fb,clip,48,324,"until you confirm.",FontRole::Body,kInkMuted);
   text(fb,clip,48,382,"After confirmation, tap each of the four",FontRole::Body,kInkMuted);
   text(fb,clip,48,414,"visible corner targets in order.",FontRole::Body,kInkMuted);
-  actionButton(fb,kTouchRecalibrateCancelAction,"CANCEL");
-  actionButton(fb,kTouchRecalibrateConfirmAction,"RECALIBRATE",true);
+  actionButton(fb,kTouchRecalibrateCancelAction,"CANCEL",false,Icon::Close);
+  actionButton(fb,kTouchRecalibrateConfirmAction,"RECALIBRATE",true,Icon::Touch);
 }
 
 void weatherSetup(uint8_t* fb,const UiSnapshot& s){
   const weather::WizardSnapshot&w=s.weatherWizard;
   text(fb,{24,20,270,54},24,52,"WEATHER SETUP",FontRole::PageHeading,kInk);
-  actionButton(fb,{24,112,112,56},"BACK");
+  actionButton(fb,{24,112,112,56},"BACK",false,Icon::ChevronLeft,true);
   if(w.step==weather::WizardStep::Choice){
     text(fb,{24,74,492,30},24,96,"WEATHER LOCATION",FontRole::CardHeading,kInk);
-    actionButton(fb,{150,112,366,56},"DISPLAY PREFERENCES");
+    actionButton(fb,{150,112,366,56},"DISPLAY PREFERENCES",false,Icon::Display);
     const char* labels[]={"USE GPS","SEARCH CITY","ZIP / POSTAL","ENTER COORDINATES","DISABLE WEATHER"};
-    for(int i=0;i<5;++i)actionButton(fb,{24,176+i*118,492,110},labels[i]);
+    const Icon glyphs[]={Icon::Location,Icon::Search,Icon::Keyboard,Icon::Location,Icon::Power};
+    for(int i=0;i<5;++i)actionButton(fb,{24,176+i*118,492,110},labels[i],false,glyphs[i]);
   }else if(w.step==weather::WizardStep::Gps){
     const char* gpsStatus=s.location.state==location::GpsState::Starting?"STARTING GPS":
         (location::currentFixUsable(s.location)?"GPS FIXED":
          (s.location.state==location::GpsState::Searching?"SEARCHING FOR GPS":"GPS FIX REQUIRED"));
     card(fb,{24,190,492,220},"USE GPS",gpsStatus,"WEATHER MODE SAVED - COORDINATES PRIVATE");
-    actionButton(fb,{24,520,492,70},"USE CITY INSTEAD");
-    actionButton(fb,{24,600,492,70},"USE POSTAL INSTEAD");
-    actionButton(fb,{24,680,492,70},"ENTER COORDINATES INSTEAD");
-    actionButton(fb,{24,780,238,64},"BACK");actionButton(fb,{278,780,238,64},"RETRY");
+    actionButton(fb,{24,520,492,70},"USE CITY INSTEAD",false,Icon::Search);
+    actionButton(fb,{24,600,492,70},"USE POSTAL INSTEAD",false,Icon::Keyboard);
+    actionButton(fb,{24,680,492,70},"ENTER COORDINATES INSTEAD",false,Icon::Location);
+    actionButton(fb,{24,780,238,64},"BACK",false,Icon::ChevronLeft,true);actionButton(fb,{278,780,238,64},"RETRY",false,Icon::Refresh);
   }else if(w.step==weather::WizardStep::Input){
     const char* value=w.inputKind==weather::InputKind::Latitude?w.latitude:(w.inputKind==weather::InputKind::Longitude?w.longitude:w.input);
     card(fb,{24,176,492,58},weather::inputKindName(w.inputKind),value[0]?value:"--");
     const char* chars=weather::pickerCharacters(w.inputKind,w.characterPage);
+    // Each single-character key label is its approved compact key graphic.
     for(int row=0;row<5;++row)for(int col=0;col<6;++col){Rect key{24+col*82,246+row*82,74,74};roundedRect(fb,key,8,kPaper,kInk);char label[2]{chars[row*6+col],0};if(label[0]!=' '){const String keyLabel(label);text(fb,key,key.x+(key.w-textWidth(keyLabel,FontRole::CardHeading))/2,centeredBaseline(key,FontRole::CardHeading),keyLabel,FontRole::CardHeading,kInk);}}
-    actionButton(fb,{24,682,150,64},"PAGE");actionButton(fb,{195,682,150,64},"DELETE");actionButton(fb,{366,682,150,64},w.inputKind==weather::InputKind::Postal?String("COUNTRY ")+w.country:"SPACE");
-    actionButton(fb,{24,780,238,64},"CANCEL");actionButton(fb,{278,780,238,64},w.inputKind==weather::InputKind::Longitude?"CONFIRM":"NEXT");
+    actionButton(fb,{24,682,150,64},"PAGE",false,Icon::Next);actionButton(fb,{195,682,150,64},"DELETE",false,Icon::Delete);actionButton(fb,{366,682,150,64},w.inputKind==weather::InputKind::Postal?String("COUNTRY ")+w.country:"SPACE",false,Icon::Keyboard);
+    actionButton(fb,{24,780,238,64},"CANCEL",false,Icon::Close);actionButton(fb,{278,780,238,64},w.inputKind==weather::InputKind::Longitude?"CONFIRM":"NEXT",false,Icon::Check);
   }else if(w.step==weather::WizardStep::Results){
     text(fb,{24,178,492,34},24,202,s.weather.searchState==weather::SearchState::Pending?"SEARCHING...":"SELECT A RESULT",FontRole::CardHeading,kInk);
-    for(uint8_t i=0;i<s.weather.resultCount&&i<5;++i)actionButton(fb,{24,220+i*100,492,88},s.weather.results[i].label);
-    actionButton(fb,{24,780,238,64},"CANCEL");
+    for(uint8_t i=0;i<s.weather.resultCount&&i<5;++i)actionButton(fb,{24,220+i*100,492,88},s.weather.results[i].label,false,Icon::Location);
+    actionButton(fb,{24,780,238,64},"CANCEL",false,Icon::Close);
   }else if(w.step==weather::WizardStep::Confirm){
     String source=weather::sourceName(w.pendingSource);String label=source;
     if((w.pendingSource==weather::LocationSource::City||w.pendingSource==weather::LocationSource::Postal)&&w.selectedResult<s.weather.resultCount)label=s.weather.results[w.selectedResult].label;
     card(fb,{24,190,492,220},"CONFIRM LOCATION",label,String("SOURCE ")+source);
     text(fb,{44,438,452,100},44,466,w.pendingSource==weather::LocationSource::Manual?"COORDINATES WILL BE SENT TO THE WEATHER PROVIDER.":"NO WEATHER REQUEST UNTIL YOU SAVE.",FontRole::Body,kInk);
-    actionButton(fb,{24,780,238,64},"CANCEL");actionButton(fb,{278,780,238,64},"SAVE & FETCH");
+    actionButton(fb,{24,780,238,64},"CANCEL",false,Icon::Close);actionButton(fb,{278,780,238,64},"SAVE & FETCH",true,Icon::Save);
   }else{
     text(fb,{24,178,492,34},24,202,"WEATHER DISPLAY",FontRole::CardHeading,kInk);
-    actionButton(fb,{24,220,492,86},s.weather.temperatureUnit==weather::TemperatureUnit::Celsius?"TEMPERATURE: CELSIUS":"TEMPERATURE: FAHRENHEIT",true);
-    actionButton(fb,{24,322,492,86},s.weather.showTemperature?"CURRENT TEMPERATURE: ON":"CURRENT TEMPERATURE: OFF",s.weather.showTemperature);
-    actionButton(fb,{24,424,492,86},s.weather.showCondition?"CONDITION: ON":"CONDITION: OFF",s.weather.showCondition);
-    actionButton(fb,{24,526,492,86},s.weather.showCity?"CITY LABEL: ON":"CITY LABEL: OFF",s.weather.showCity);
-    actionButton(fb,{24,628,492,86},s.weather.showFeelsLike?"FEELS-LIKE: ON":"FEELS-LIKE: OFF",s.weather.showFeelsLike);
-    actionButton(fb,{24,780,238,64},"DONE");
+    actionButton(fb,{24,220,492,86},s.weather.temperatureUnit==weather::TemperatureUnit::Celsius?"TEMPERATURE: CELSIUS":"TEMPERATURE: FAHRENHEIT",true,Icon::Units);
+    actionButton(fb,{24,322,492,86},s.weather.showTemperature?"CURRENT TEMPERATURE: ON":"CURRENT TEMPERATURE: OFF",s.weather.showTemperature,Icon::Weather);
+    actionButton(fb,{24,424,492,86},s.weather.showCondition?"CONDITION: ON":"CONDITION: OFF",s.weather.showCondition,Icon::Weather);
+    actionButton(fb,{24,526,492,86},s.weather.showCity?"CITY LABEL: ON":"CITY LABEL: OFF",s.weather.showCity,Icon::Location);
+    actionButton(fb,{24,628,492,86},s.weather.showFeelsLike?"FEELS-LIKE: ON":"FEELS-LIKE: OFF",s.weather.showFeelsLike,Icon::Weather);
+    actionButton(fb,{24,780,238,64},"DONE",true,Icon::Check);
   }
   if(w.error[0])text(fb,{24,746,492,28},24,770,w.error,FontRole::Caption,kInk);
 }

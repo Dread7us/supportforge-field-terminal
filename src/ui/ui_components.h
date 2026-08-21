@@ -11,7 +11,9 @@ namespace ui {
 
 enum class Icon : uint8_t {
   Home, Systems, Radio, Location, Device, Battery, Wifi, Lock, Check, Info,
-  ChevronLeft, ChevronRight, Refresh, Settings, Power, Search, Close
+  ChevronLeft, ChevronRight, Refresh, Settings, Power, Search, Close,
+  Clock, Calculator, Display, Weather, Cleanup, Diagnostics, Keyboard, Delete,
+  Light, Units, Privacy, Touch, Next, Save
 };
 enum class FontRole : uint8_t {
   Caption, Body, CardHeading, PageHeading, Brand, Metric, HomeClock, VehicleSpeed, AltimeterMetric, Navigation,
@@ -28,7 +30,11 @@ int textHeight(FontRole role = FontRole::Body);
 bool textFits(const String& value, FontRole role, Rect region);
 String fittedText(const String& value, FontRole role, int width);
 int centeredBaseline(Rect bounds, FontRole role);
-void actionButton(uint8_t* fb, Rect bounds, const String& label, bool selected = false);
+void actionButton(uint8_t* fb, Rect bounds, const String& label, bool selected,
+                  Icon glyph, bool backLayout = false);
+void selectableCard(uint8_t* fb, Rect bounds, const String& title,
+                    const String& detail, const String& secondary,
+                    bool selected, Icon glyph);
 void icon(uint8_t* fb, Icon value, int cx, int cy, int size, uint8_t color = kInk);
 void batteryIcon(uint8_t* fb, Rect bounds, battery::State state,
                  bool percentAvailable, uint8_t percent, uint8_t color = kInk);

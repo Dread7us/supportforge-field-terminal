@@ -75,6 +75,7 @@ class WifiManager {
   bool connectionRequested_ = false;
   bool reconnectAfterScan_ = false;
   bool servicesAllowed_ = true;
+  uint8_t publishedSignalBucket_ = 0;
 };
 
 }  // namespace network

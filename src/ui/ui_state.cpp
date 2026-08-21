@@ -16,11 +16,11 @@ const char* refreshModeName(RefreshMode mode) {
 
 const char* refreshModeSummary(RefreshMode mode) {
   switch (mode) {
-    case RefreshMode::QuickNavigation: return "FAST GC16; MANUAL CLEAN AS NEEDED";
-    case RefreshMode::Balanced: return "GC16; BOUNDED RECOVERY CLEANUP";
-    case RefreshMode::BeautifulClean: return "GC16; RARE COOLDOWN-GUARDED CLEANUP";
+    case RefreshMode::QuickNavigation: return "CLEAN TRANSITIONS; MINIMAL IN-PAGE GC16";
+    case RefreshMode::Balanced: return "CLEAN TRANSITIONS; NORMAL GC16";
+    case RefreshMode::BeautifulClean: return "CLEAN TRANSITIONS; QUALITY PRIORITY";
   }
-  return "GC16; BOUNDED RECOVERY CLEANUP";
+  return "CLEAN TRANSITIONS; NORMAL GC16";
 }
 
 const char* pageName(Page page) {
@@ -101,6 +101,15 @@ bool materiallyDifferent(const UiSnapshot& a, const UiSnapshot& b) {
        a.batterySampleValid != b.batterySampleValid ||
        a.batteryChargeStatusVerified != b.batteryChargeStatusVerified ||
        a.batteryChargerConnection != b.batteryChargerConnection ||
+       a.batteryChargePhase != b.batteryChargePhase ||
+       a.batteryDiagnosis != b.batteryDiagnosis ||
+       a.batteryVoltageAvailable != b.batteryVoltageAvailable ||
+       (a.batteryVoltageAvailable && a.batteryVoltageMillivolts != b.batteryVoltageMillivolts) ||
+       a.batteryCurrentAvailable != b.batteryCurrentAvailable ||
+       (a.batteryCurrentAvailable && a.batteryAverageCurrentMilliamps != b.batteryAverageCurrentMilliamps) ||
+       a.batteryCapacityAvailable != b.batteryCapacityAvailable ||
+       (a.batteryCapacityAvailable && (a.batteryRemainingCapacityMah != b.batteryRemainingCapacityMah ||
+        a.batteryFullChargeCapacityMah != b.batteryFullChargeCapacityMah)) ||
       a.weather.state != b.weather.state ||
        a.weather.source != b.weather.source ||
        a.weather.configured != b.weather.configured ||

@@ -80,11 +80,13 @@ class PowerInputWeatherContractTests(unittest.TestCase):
     def test_timezone_and_compact_settings_geometry_are_reflowed(self):
         self.assertEqual(THEME.count("{24,150,492,104}"), 1)
         self.assertIn("kTimezoneActions[4].y + kTimezoneActions[4].h < kTimezoneBackAction.y", THEME)
-        self.assertIn("b.w-150", PAGES)
         self.assertIn("timezoneDescription(i)", PAGES)
         self.assertIn('"SELECTED":"SELECT"', PAGES)
-        self.assertIn("const bool compact = b.h < 100", COMPONENTS)
-        self.assertIn("compact ? FontRole::Caption : FontRole::Body", COMPONENTS)
+        self.assertIn("selectableCard(fb,b,device_time::timezoneLabel(i)", PAGES)
+        selectable = COMPONENTS[COMPONENTS.index("void selectableCard("):
+                                COMPONENTS.index("void batteryIcon(")]
+        self.assertIn("icon(fb,glyph,b.x+34,b.y+34,24,fg)", selectable)
+        self.assertIn("fittedText(detail,FontRole::Body,b.w-40)", selectable)
 
     def test_weather_location_persistence_invalidation_redraw_and_privacy(self):
         for key in ('putString("city"', 'putString("region"', 'putString("country"',

@@ -45,9 +45,7 @@ class DisplayCoordinator {
   void printPerformance() const;
 
  private:
-  bool automaticCleanupAvailable(uint32_t nowMs) const;
-  bool rareMajorTransition(Page from, Page to) const;
-  void noteCleanupStarted(uint32_t nowMs);
+  void noteCleanupStarted();
   UiSnapshot snapshot_{};
   bool initialized_ = false;
   RenderPriority pendingRender_ = RenderPriority::Cosmetic;
@@ -57,10 +55,6 @@ class DisplayCoordinator {
   uint32_t lastRefreshMs_ = 0;
   uint32_t refreshCount_ = 0;
   uint32_t lastManualRefreshMs_ = 0;
-  uint32_t lastCleanupMs_ = 0;
-  uint32_t bootRecoveryEligibleAtMs_ = 0;
-  bool cleanupCooldownActive_ = false;
-  bool bootRecoveryArmed_ = false;
   bool hasPresentedPage_ = false;
   Page lastPresentedPage_ = Page::Home;
   bool failedUpdateRetryUsed_ = false;

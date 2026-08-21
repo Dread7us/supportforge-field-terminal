@@ -52,8 +52,8 @@ bool gpsFixObserved = false;
 bool radioObserved = false;
 
 constexpr const char *kFirmwareId = "UI QUAL 3";
-// Revision is retained as audit metadata. Recovery cleanup is armed on every
-// boot, but the usable HOME/TOUCH SETUP GC16 frame is always presented first.
+// Revision is retained as audit metadata. Every boot arms one physical panel
+// cleanup which must complete before the first usable HOME/TOUCH SETUP frame.
 constexpr uint32_t kDisplayCleanupRevision = 11;
 Preferences bootPreferences;
 bool bootCleanupPending = false;
@@ -118,6 +118,15 @@ ui::UiSnapshot makeUiSnapshot() {
   state.batterySampleValid = battery.sampleValid;
   state.batteryChargeStatusVerified = battery.chargeStatusVerified;
   state.batteryChargerConnection = battery.chargerConnection;
+  state.batteryChargePhase = battery.chargePhase;
+  state.batteryDiagnosis = battery.diagnosis;
+  state.batteryVoltageAvailable = battery.voltageAvailable;
+  state.batteryVoltageMillivolts = battery.voltageMillivolts;
+  state.batteryCurrentAvailable = battery.currentAvailable;
+  state.batteryAverageCurrentMilliamps = battery.averageCurrentMilliamps;
+  state.batteryCapacityAvailable = battery.capacityAvailable;
+  state.batteryRemainingCapacityMah = battery.remainingCapacityMah;
+  state.batteryFullChargeCapacityMah = battery.fullChargeCapacityMah;
   state.batteryLastSampleMs = battery.lastSampleMs;
   state.batteryLastAttemptMs = battery.lastAttemptMs;
   const device_time::Snapshot clock = timeService.snapshot();
@@ -317,7 +326,7 @@ void printProfile() {
   } else {
     Serial.println("GPS: unavailable in this comparison profile; no pins guessed");
   }
-  Serial.println("Boot policy: usable-page GC16 first; delayed guarded recovery cleanup, background services, no RF transmit or GPS TX.");
+  Serial.println("Boot policy: physical panel cleanup before first usable frame; then content GC16 and HV off. No RF transmit or GPS TX.");
 }
 
 void printHelp() {
@@ -752,9 +761,8 @@ void setup() {
     Serial.printf("DISPLAY initial_page=%s touch_qualified=%s\n",
                   ui::pageName(initialPage),
                   touchController.mappingVerified() ? "YES" : "NO");
-    // Compose and present the usable destination first. Guarded boot recovery is
-    // armed for a later dirty render after its grace period; a persisted mode can
-    // never put a cleanup ahead of HOME/TOUCH SETUP or create a boot cleanup loop.
+    // The first render consumes the every-boot guard: physical cleanup completes
+    // before HOME/TOUCH SETUP content is presented, then display HV is powered off.
     testDisplay();
     firstScreenRenderedAtMs = millis();
     const uint32_t firstScreenMs = millis() - bootStartedMs;
@@ -1138,6 +1146,16 @@ void loop() {
       latestGpsVersion != observedGpsVersion ||
       latestLowPowerVersion != observedLowPowerVersion ||
       latestWifiVersion != observedWifiVersion) {
+#if SUPPORTFORGE_PERF_DIAGNOSTICS
+    Serial.printf("UI_DIRTY_SOURCE telemetry=%lu>%lu time=%lu>%lu weather=%lu>%lu battery=%lu>%lu gps=%lu>%lu power=%lu>%lu wifi=%lu>%lu\n",
+                  static_cast<unsigned long>(observedTelemetryVersion), static_cast<unsigned long>(latestTelemetryVersion),
+                  static_cast<unsigned long>(observedTimeVersion), static_cast<unsigned long>(latestTimeVersion),
+                  static_cast<unsigned long>(observedWeatherVersion), static_cast<unsigned long>(latestWeatherVersion),
+                  static_cast<unsigned long>(observedBatteryVersion), static_cast<unsigned long>(latestBatteryVersion),
+                  static_cast<unsigned long>(observedGpsVersion), static_cast<unsigned long>(latestGpsVersion),
+                  static_cast<unsigned long>(observedLowPowerVersion), static_cast<unsigned long>(latestLowPowerVersion),
+                  static_cast<unsigned long>(observedWifiVersion), static_cast<unsigned long>(latestWifiVersion));
+#endif
     observedTelemetryVersion = latestTelemetryVersion;
     observedTimeVersion = latestTimeVersion;
     observedWeatherVersion = latestWeatherVersion;

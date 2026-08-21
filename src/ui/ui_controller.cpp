@@ -16,8 +16,6 @@ constexpr size_t kFramebufferBytes = spec::kFramebufferStrideBytes * spec::kPhys
 constexpr size_t kGuardBytes = 64;
 constexpr uint8_t kGuardPattern = 0xA5;
 constexpr uint32_t kManualRefreshLimitMs = 45000;
-constexpr uint32_t kAutomaticCleanupCooldownMs = 300000;
-constexpr uint32_t kBootRecoveryGraceMs = 60000;
 static_assert(spec::kFramebufferBitsPerPixel == 4, "renderer requires packed 4-bpp EPDiy frames");
 static_assert(spec::kFramebufferStrideBytes * 2 == spec::kPhysicalWidth,
               "packed framebuffer stride must contain exactly two pixels per byte");
@@ -119,21 +117,7 @@ bool DisplayCoordinator::manualRefreshAvailable(uint32_t nowMs) const {
       nowMs - lastManualRefreshMs_ >= kManualRefreshLimitMs);
 }
 
-bool DisplayCoordinator::automaticCleanupAvailable(uint32_t nowMs) const {
-  return !cleanupCooldownActive_ || nowMs - lastCleanupMs_ >= kAutomaticCleanupCooldownMs;
-}
-
-bool DisplayCoordinator::rareMajorTransition(Page from, Page to) const {
-  auto qualificationLayout=[](Page page) {
-    return page == Page::DisplayCalibration || page == Page::TextQualification ||
-        page == Page::TouchSetup;
-  };
-  return from != to && qualificationLayout(from) != qualificationLayout(to);
-}
-
-void DisplayCoordinator::noteCleanupStarted(uint32_t nowMs) {
-  lastCleanupMs_ = nowMs;
-  cleanupCooldownActive_ = true;
+void DisplayCoordinator::noteCleanupStarted() {
   fullClearUsed_ = true;
 }
 
@@ -162,20 +146,16 @@ bool DisplayCoordinator::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
   lastRenderWaitMs_ = pendingSinceMs_ ? renderStartedMs - pendingSinceMs_ : 0;
   pendingRender_ = RenderPriority::None;
   updating_ = true;
-  if (bootRecovery && !fullClearUsed_ && !bootRecoveryArmed_) {
-    bootRecoveryArmed_ = true;
-    bootRecoveryEligibleAtMs_ = nowMs + kBootRecoveryGraceMs;
-  }
-  const bool recoveryCleanupDue = bootRecovery && !fullClearUsed_ && bootRecoveryArmed_ &&
-      static_cast<int32_t>(nowMs - bootRecoveryEligibleAtMs_) >= 0;
-  const bool majorTransition = hasPresentedPage_ &&
-      rareMajorTransition(lastPresentedPage_, snapshot_.page);
-  // QUICK never performs automatic cleanup. BALANCED and BEAUTIFUL share the
-  // bounded recovery/rare-layout gate; ordinary material, navigation, feedback,
-  // input, timer, telemetry and coalesced renders remain one GC16 presentation.
-  const bool automaticCleanupMode = refreshMode_ != RefreshMode::QuickNavigation;
-  const bool cleanupThisRender = automaticCleanupMode &&
-      (recoveryCleanupDue || majorTransition) && automaticCleanupAvailable(nowMs);
+  const bool firstUsableFrame = !hasPresentedPage_;
+  const bool fullPageTransition = renderingPriority == RenderPriority::Navigation &&
+      hasPresentedPage_ && lastPresentedPage_ != snapshot_.page;
+  // A known-white composition buffer and a GC16 white pre-pass only synchronize
+  // software pixels; neither proves that this panel released retained pigment.
+  // Physical qualification therefore requires EPDiy's hardware cleanup sequence
+  // once before the first usable frame and once per accepted page transition in
+  // every selectable mode. Cosmetic telemetry/input/timer renders never enter it.
+  const bool cleanupThisRender = (bootRecovery && firstUsableFrame && !fullClearUsed_) ||
+      fullPageTransition;
   bool displayPowered = false;
   if (cleanupThisRender) {
     // The high-level back buffer starts white and cannot know the panel's
@@ -184,7 +164,7 @@ bool DisplayCoordinator::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
     epd_poweron();
     displayPowered = true;
     const uint32_t cleanupStartedMs = millis();
-    noteCleanupStarted(cleanupStartedMs);
+    noteCleanupStarted();
     epd_fullclear(&gDisplayState, epd_ambient_temperature());
     lastFullCleanupDurationMs_ = millis() - cleanupStartedMs;
     Serial.println("DISPLAY cleanup=COMPLETE method=LILYGO_EPD_FULLCLEAR");
@@ -209,11 +189,13 @@ bool DisplayCoordinator::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
     return false;
   }
   Serial.println("DISPLAY canaries=INTACT");
-  memcpy(framebuffer, compositionBuffer_, kFramebufferBytes);
   if (!displayPowered) epd_poweron();
+  memcpy(framebuffer, compositionBuffer_, kFramebufferBytes);
   const uint32_t gc16StartedMs = millis();
-  const EpdDrawError result = epd_hl_update_screen(&gDisplayState, MODE_GC16, epd_ambient_temperature());
+  const EpdDrawError contentResult = epd_hl_update_screen(
+      &gDisplayState, MODE_GC16, epd_ambient_temperature());
   lastGc16DurationMs_ = millis() - gc16StartedMs;
+  const EpdDrawError result = contentResult;
   epd_poweroff();  // High voltage is shut down after every attempted update.
   updating_ = false;
   lastRefreshMs_ = millis();
@@ -239,7 +221,7 @@ bool DisplayCoordinator::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
   } else {
     Serial.println("DISPLAY retry=SUPPRESSED reason=REPEATED_UPDATE_FAILURE");
   }
-  Serial.printf("DISPLAY render=GC16 page=%s mode=%s cleanup=%s gc16_ms=%lu cleanup_ms=%lu transition_ms=%lu count=%lu result=%d\n",
+  Serial.printf("DISPLAY render=GC16 page=%s mode=%s physical_cleanup=%s gc16_ms=%lu cleanup_ms=%lu transition_ms=%lu count=%lu result=%d\n",
                 pageName(snapshot_.page), refreshModeName(refreshMode_), cleanupThisRender?"YES":"NO",
                 static_cast<unsigned long>(lastGc16DurationMs_),
                 static_cast<unsigned long>(cleanupThisRender?lastFullCleanupDurationMs_:0),
@@ -261,7 +243,7 @@ bool DisplayCoordinator::renderWhiteTest(uint32_t nowMs) {
   Serial.println("DISPLAY white_test=START guard=ONCE_PER_BOOT cleanup=START");
   epd_poweron();
   const uint32_t cleanupStartedMs=millis();
-  noteCleanupStarted(cleanupStartedMs);
+  noteCleanupStarted();
   epd_fullclear(&gDisplayState,epd_ambient_temperature());
   fullClearUsed_=true;
   lastFullCleanupDurationMs_=millis()-cleanupStartedMs;
@@ -302,7 +284,7 @@ bool DisplayCoordinator::manualFullRefresh(uint32_t nowMs, Page returnPage) {
   // rejected before this point remains eligible instead of consuming the limit.
   lastManualRefreshMs_=millis();
   const uint32_t cleanupStartedMs=millis();
-  noteCleanupStarted(cleanupStartedMs);
+  noteCleanupStarted();
   epd_fullclear(&gDisplayState,epd_ambient_temperature());
   fullClearUsed_=true;
   lastFullCleanupDurationMs_=millis()-cleanupStartedMs;

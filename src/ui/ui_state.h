@@ -98,6 +98,15 @@ struct UiSnapshot {
   bool batterySampleValid = false;
   bool batteryChargeStatusVerified = false;
   battery::ChargerConnection batteryChargerConnection = battery::ChargerConnection::Unknown;
+  battery::ChargePhase batteryChargePhase = battery::ChargePhase::Unknown;
+  battery::Diagnosis batteryDiagnosis = battery::Diagnosis::None;
+  bool batteryVoltageAvailable = false;
+  uint16_t batteryVoltageMillivolts = 0;
+  bool batteryCurrentAvailable = false;
+  int16_t batteryAverageCurrentMilliamps = 0;
+  bool batteryCapacityAvailable = false;
+  uint16_t batteryRemainingCapacityMah = 0;
+  uint16_t batteryFullChargeCapacityMah = 0;
   uint32_t batteryLastSampleMs = 0;
   uint32_t batteryLastAttemptMs = 0;
   device_time::SyncState timeSyncState = device_time::SyncState::Unsynchronized;

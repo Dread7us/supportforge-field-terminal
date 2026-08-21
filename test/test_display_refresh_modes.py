@@ -39,34 +39,44 @@ class DisplayRefreshModeTests(unittest.TestCase):
         self.assertIn("else ++renderCoalescedCount_", block)
         self.assertLess(block.index("pendingRender_ = priority"), block.index("else ++renderCoalescedCount_"))
 
-    def test_exact_cleanup_policy_is_central_and_only_consumes_real_demand(self):
+    def test_exact_cleanup_policy_physically_cleans_boot_and_real_page_changes(self):
         render = CONTROLLER[CONTROLLER.index("bool DisplayCoordinator::renderIfDirty"):
                             CONTROLLER.index("void DisplayCoordinator::printPerformance")]
         self.assertIn("pendingRender_ == RenderPriority::None", render)
-        policy = render[render.index("const bool automaticCleanupMode"):render.index("bool displayPowered")]
-        self.assertIn("refreshMode_ != RefreshMode::QuickNavigation", policy)
-        self.assertIn("recoveryCleanupDue || majorTransition", policy)
-        self.assertIn("automaticCleanupAvailable(nowMs)", policy)
-        self.assertNotIn("RefreshMode::BeautifulClean ||", policy)
-        self.assertNotIn("renderingPriority == RenderPriority::Navigation", policy)
+        policy = render[render.index("const bool firstUsableFrame"):render.index("bool displayPowered")]
+        self.assertIn("!hasPresentedPage_", policy)
+        self.assertIn("renderingPriority == RenderPriority::Navigation", policy)
+        self.assertIn("hasPresentedPage_ && lastPresentedPage_ != snapshot_.page", policy)
+        self.assertIn("(bootRecovery && firstUsableFrame && !fullClearUsed_) ||", policy)
+        self.assertIn("fullPageTransition", policy)
+        for mode in ("QuickNavigation", "Balanced", "BeautifulClean"):
+            self.assertNotIn(mode, policy)
         self.assertLess(render.index("memset(compositionBuffer_, 0xFF"), render.index("renderPage(compositionBuffer_"))
-        self.assertEqual(render.count("epd_hl_update_screen"), 1)
-        self.assertIn("MODE_GC16", render)
+        cleanup = render[render.index("if (cleanupThisRender)"):
+                         render.index("memset(compositionBuffer_, 0xFF")]
+        self.assertEqual(cleanup.count("epd_fullclear"), 1)
+        self.assertNotIn("epd_hl_update_screen", cleanup)
+        content_start = render.index("memcpy(framebuffer, compositionBuffer_")
+        content_update = render[content_start:render.index("epd_poweroff()", content_start)]
+        self.assertEqual(content_update.count("epd_hl_update_screen"), 1)
+        self.assertIn("MODE_GC16", content_update)
 
-    def test_persisted_beautiful_boots_to_usable_frame_before_recovery_cleanup(self):
+    def test_every_boot_physically_cleans_before_first_usable_frame(self):
         begin = CONTROLLER[CONTROLLER.index("bool DisplayCoordinator::begin"):
                            CONTROLLER.index("bool DisplayCoordinator::setRefreshMode")]
         self.assertIn("stored <= static_cast<uint8_t>(RefreshMode::BeautifulClean)", begin)
         setup = MAIN[MAIN.index("void setup()") : MAIN.index("void loop()")]
         self.assertLess(setup.index("syncUiState()"), setup.index("testDisplay()"))
-        self.assertIn("usable destination first", setup)
+        self.assertIn("cleanup completes", setup)
         render = CONTROLLER[CONTROLLER.index("bool DisplayCoordinator::renderIfDirty"):
                             CONTROLLER.index("void DisplayCoordinator::printPerformance")]
-        self.assertIn("bootRecoveryEligibleAtMs_ = nowMs + kBootRecoveryGraceMs", render)
-        self.assertIn("hasPresentedPage_", render)
-        self.assertNotIn("(bootRecovery && !fullClearUsed_) ||", render)
+        self.assertIn("bootRecovery && firstUsableFrame && !fullClearUsed_", render)
+        self.assertLess(render.index("epd_fullclear"), render.index("renderPage(compositionBuffer_"))
+        self.assertLess(render.index("epd_fullclear"), render.index("epd_hl_update_screen"))
+        self.assertIn("bootCleanupPending = true", MAIN)
+        self.assertIn("bootCleanupPending && !displayCoordinator.cleanupUsed()", MAIN)
 
-    def test_beautiful_cosmetic_sources_can_only_request_normal_gc16(self):
+    def test_cosmetic_sources_can_only_request_content_gc16_without_cleanup(self):
         material = STATE[STATE.index("bool materiallyDifferent"):]
         for token in ("a.hour != b.hour", "a.minute != b.minute", "a.telemetry.fetchState",
                       "a.batteryState", "a.batteryChargerConnection", "a.pressFeedback.active",
@@ -75,20 +85,20 @@ class DisplayRefreshModeTests(unittest.TestCase):
         snapshot = CONTROLLER[CONTROLLER.index("void DisplayCoordinator::setSnapshot"):
                               CONTROLLER.index("bool DisplayCoordinator::requestPage")]
         self.assertIn("requestRender(RenderPriority::Cosmetic)", snapshot)
-        policy = CONTROLLER[CONTROLLER.index("const bool automaticCleanupMode"):
+        policy = CONTROLLER[CONTROLLER.index("const bool firstUsableFrame"):
                             CONTROLLER.index("bool displayPowered")]
+        executable_policy = "\n".join(line for line in policy.splitlines()
+                                      if not line.lstrip().startswith("//"))
         for forbidden in ("Cosmetic", "pressFeedback", "telemetry", "battery", "wifi", "minute"):
-            self.assertNotIn(forbidden, policy)
+            self.assertNotIn(forbidden, executable_policy)
 
-    def test_cleanup_cooldown_is_bounded_and_never_blocks_navigation(self):
-        self.assertIn("kAutomaticCleanupCooldownMs = 300000", CONTROLLER)
-        available = CONTROLLER[CONTROLLER.index("bool DisplayCoordinator::automaticCleanupAvailable"):
-                               CONTROLLER.index("bool DisplayCoordinator::rareMajorTransition")]
-        self.assertIn("nowMs - lastCleanupMs_ >= kAutomaticCleanupCooldownMs", available)
+    def test_cleanup_has_no_timer_queue_or_cooldown_and_never_blocks_navigation(self):
+        for retired in ("kAutomaticCleanupCooldownMs", "automaticCleanupAvailable",
+                        "lastCleanupMs_", "cleanupCooldownActive_", "navigationWash"):
+            self.assertNotIn(retired, CONTROLLER + CONTROLLER_H)
         request_page = CONTROLLER[CONTROLLER.index("bool DisplayCoordinator::requestPage"):
                                   CONTROLLER.index("bool DisplayCoordinator::inputBlocked")]
         self.assertNotIn("cleanup", request_page.lower())
-        self.assertNotIn("lastCleanupMs_", request_page)
         self.assertIn("requestRender(RenderPriority::Navigation)", request_page)
         self.assertNotRegex(CONTROLLER_H, r"pendingCleanup|cleanupQueue|queuedCleanup")
 
@@ -100,8 +110,8 @@ class DisplayRefreshModeTests(unittest.TestCase):
         render = CONTROLLER[CONTROLLER.index("bool DisplayCoordinator::renderIfDirty"):
                             CONTROLLER.index("void DisplayCoordinator::printPerformance")]
         self.assertEqual(render.count("epd_fullclear"), 1)
-        self.assertIn("noteCleanupStarted(cleanupStartedMs)", render)
-        self.assertLess(render.index("noteCleanupStarted(cleanupStartedMs)"), render.index("epd_fullclear"))
+        self.assertIn("noteCleanupStarted()", render)
+        self.assertLess(render.index("noteCleanupStarted()"), render.index("epd_fullclear"))
 
     def test_mode_page_diagnostics_and_touch_geometry_are_explicit(self):
         for label in ("QUICK", "BALANCED", "BEAUTIFUL", "SELECTED",
@@ -112,7 +122,7 @@ class DisplayRefreshModeTests(unittest.TestCase):
                        "kSettingsSyncActionCompact", "kSettingsTouchAction"):
             self.assertIn(action, MAIN + PAGES + THEME)
         self.assertIn("refresh mode choices and Back must be large and non-overlapping", THEME)
-        self.assertIn('actionButton(fb,kRefreshModeBackAction,"BACK")', PAGES)
+        self.assertIn('actionButton(fb,kRefreshModeBackAction,"BACK",false,Icon::ChevronLeft,true)', PAGES)
 
     def test_device_cleanup_is_immediate_rate_limited_and_state_safe(self):
         self.assertIn("kDeviceDisplayRefreshAction", MAIN + THEME)

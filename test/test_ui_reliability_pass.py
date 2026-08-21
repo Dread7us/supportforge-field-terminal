@@ -88,8 +88,8 @@ class UiReliabilityPassTests(unittest.TestCase):
     def test_primary_text_is_black_on_white_and_selected_fill_is_intentional(self):
         self.assertIn("kInk == 0x00 && kInkMuted == 0x00 && kRule == 0x00", THEME)
         self.assertIn("kSurfaceSoft == 0xFF && kPaper == 0xFF", THEME)
-        self.assertIn("selected?kInk:kPaper", PAGES)
-        self.assertIn("selected?kPaper:kInk", PAGES)
+        self.assertIn("selected?kInk:kPaper", COMPONENTS)
+        self.assertIn("selected?kPaper:kInk", COMPONENTS)
         self.assertNotRegex(PAGES.lower(), r"fade|opacity|animate|blink")
 
     def test_every_route_has_a_fitted_visible_title(self):

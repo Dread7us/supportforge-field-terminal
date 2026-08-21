@@ -82,6 +82,11 @@ class SettingsWifiCalculatorTests(unittest.TestCase):
         self.assertIn("if (current.scanState == ScanState::Scanning) return", WIFI)
         self.assertIn("reconnectAfterScan_", WIFI + WIFI_H)
         self.assertIn("snapshot_.resultCount < kMaximumScanResults", WIFI)
+        self.assertIn("stableSignalBucket(publishedSignalBucket_, rssi)", WIFI)
+        self.assertIn("kHysteresisDbm = 3", WIFI)
+        self.assertIn("publishedSignalBucket_", WIFI_H)
+        self.assertNotIn("snapshot_.rssi != rssi", WIFI)
+        self.assertIn("continuous GC16 redraw loop", WIFI)
         services = WIFI[WIFI.index("void WifiManager::setServicesAllowed"):
                         WIFI.index("bool WifiManager::forgetUserCredentials")]
         self.assertIn("snapshot_.scanState = ScanState::Idle", services)

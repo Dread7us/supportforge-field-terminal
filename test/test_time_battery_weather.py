@@ -78,6 +78,9 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         self.assertIn('kMaximumFreshAgeMs = maximumFreshAgeMs()', BATTERY)
         self.assertIn('kGaugeAddress = 0x55', BATTERY)
         self.assertIn('kStateOfChargeRegister = 0x2C', BATTERY)
+        for command in ('kVoltageRegister = 0x08', 'kRemainingCapacityRegister = 0x0C',
+                        'kFullChargeCapacityRegister = 0x12', 'kAverageCurrentRegister = 0x14'):
+            self.assertIn(command, BATTERY)
         self.assertIn('decodeLittleEndianWord(first[0], first[1])', BATTERY)
         self.assertIn('uint8_t first[2]{}, second[2]{}, third[2]{}', BATTERY)
         self.assertIn('thirdValue == secondValue || thirdValue == firstValue', BATTERY)
@@ -95,7 +98,12 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         self.assertIn('nearFullThresholdPercent() { return 95; }', BATTERY_H)
         self.assertIn('reconcileStateOfCharge', BATTERY + BATTERY_H)
         self.assertIn('socFresh && validPercent(percent) && percent >= nearFullThresholdPercent()', BATTERY)
-        self.assertNotRegex(BATTERY, r'Wire\.write\([^r]|seal|reset|calibr|data memory')
+        read_helper = BATTERY[BATTERY.index('bool readRegister('):BATTERY.index('bool readSoc(')]
+        self.assertEqual(read_helper.count('Wire.write(reg)'), 1)
+        self.assertIn('Wire.endTransmission(false)', read_helper)
+        self.assertIn('Wire.requestFrom(address', read_helper)
+        self.assertNotRegex(BATTERY.lower(), r'\b(unseal|seal|reset|calibrat|data.?memory|control.?subcommand)\s*\(')
+        self.assertEqual(BATTERY.count('Wire.write('), 1)
         self.assertIn('batteryState', UI_STATE)
         self.assertIn('battery::stateName', PAGES)
         self.assertIn('freshness=%s', BATTERY)
@@ -104,18 +112,31 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         self.assertIn('return "LKG"', PAGES)
 
     def test_battery_details_separate_soc_quality_connection_and_charge_state(self):
-        for label in ('"PERCENTAGE"', '"SOC QUALITY"', '"GAUGE UPDATE"',
-                      '"CHARGER"', '"CHARGE STATE"'):
+        for label in ('"PERCENT / QUALITY"', '"GAUGE UPDATE"', '"CHARGER INPUT"',
+                      '"CHARGE STATE"', '"VOLTAGE / CURRENT"', '"REMAIN / FULL"',
+                      '"EXPLANATION"'):
             self.assertIn(label, PAGES)
         for quality in ('"LIVE"', '"LKG"', '"STALE"'):
             self.assertIn(quality, PAGES)
         for state in ('"CONNECTED"', '"NOT CONNECTED"', '"VERIFICATION NEEDED"'):
             self.assertIn(state, BATTERY)
         self.assertIn('kVbusStatusMask = 0xE0', BATTERY)
+        self.assertIn('(register0b & kVbusStatusMask) >> 5', BATTERY)
+        self.assertIn('(register0b & kChargeStatusMask) >> 3', BATTERY)
         self.assertIn('classifyChargerConnection', BATTERY + BATTERY_H)
+        self.assertIn('classifyChargePhase', BATTERY + BATTERY_H)
         self.assertIn('batteryChargerConnection', MAIN + PAGES)
-        self.assertIn('if (!s.batteryChargeStatusVerified || s.batteryState == battery::State::Verifying)', PAGES)
-        self.assertIn('if (s.batteryState == battery::State::Full) return "COMPLETE"', PAGES)
+        charge_interpretation = PAGES[PAGES.index('const char* batteryChargeInterpretation'):
+                                      PAGES.index('String batteryElectrical')]
+        self.assertIn('if (!s.batteryChargeStatusVerified) return "VERIFICATION NEEDED"',
+                      charge_interpretation)
+        self.assertIn('return battery::chargePhaseName(s.batteryChargePhase)',
+                      charge_interpretation)
+        for diagnosis in ('BatteryNearReportedSoc', 'ChargerNotContinuing', 'GaugeStale',
+                          'ChargeCompleteBelowThreshold', 'GaugeModelNeedsVerification'):
+            self.assertIn(f'Diagnosis::{diagnosis}', BATTERY)
+        self.assertIn('CHARGE COMPLETE BELOW 95%; VERIFY GAUGE MODEL', BATTERY)
+        self.assertIn('static_cast<int16_t>(averageCurrent)', BATTERY)
 
     def test_weather_states_cache_interval_and_guardian_isolation(self):
         for label in ('WX SETUP', 'WX OFFLINE', 'WX ONLINE'):
@@ -194,6 +215,8 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         self.assertIn('nowMs - snapshot_.lastSampleMs > kMaximumFreshAgeMs', BATTERY)
         self.assertIn('snapshot_.percentAvailable = false', BATTERY)
         self.assertIn('snapshot_.state = State::Stale', BATTERY)
+        stale = BATTERY[BATTERY.index('void BatteryManager::poll'):BATTERY.index('void BatteryManager::sample')]
+        self.assertIn('snapshot_.diagnosis = Diagnosis::GaugeStale', stale)
 
     def test_composite_ui_snapshot_has_explicit_loop_stack_budget(self):
         controller = text("src/ui/ui_controller.cpp")

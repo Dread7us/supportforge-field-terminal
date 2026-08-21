@@ -101,7 +101,9 @@ class UiContractTests(unittest.TestCase):
   self.assertEqual(wifi[1]+wifi[3],58)
   icon=COMPONENTS[COMPONENTS.index('void wifiIcon('):COMPONENTS.index('void appBar(')]
   self.assertIn('constexpr int kBarCount=4,kBarWidth=4,kBarGap=3',icon)
-  self.assertIn('bottom=spec::kHeaderBaseline+2',icon)
+  self.assertIn('const int sharedCenterY=bounds.y+bounds.h/2',icon)
+  self.assertIn('bottom=sharedCenterY+kTallestBarHeight/2',icon)
+  self.assertIn('epd_fill_rect({bounds.x,bounds.y,bounds.w,bounds.h},kPaper,fb)',icon)
   self.assertIn('if(index<bars)epd_fill_rect',icon)
   self.assertIn('else epd_draw_rect',icon)
   self.assertNotRegex(icon,r'epd_draw_circle|epd_fill_circle|epd_draw_line|cos\(|sin\(')
@@ -227,12 +229,14 @@ class UiContractTests(unittest.TestCase):
  def test_white_test_guard_partial_off_gc16_and_poweroff(self):
   self.assertIn('whiteTestUsed_ || updating_',CONTROLLER); self.assertIn('"WHITE TEST"',CONTROLLER); self.assertIn('command == "display white-test"',MAIN); self.assertIn('kPartialRefreshEnabled = false',THEME); self.assertNotIn('MODE_DU',CONTROLLER); self.assertGreaterEqual(CONTROLLER.count('MODE_GC16'),2); self.assertGreaterEqual(CONTROLLER.count('epd_poweroff'),2)
  def test_cleanup_schema_and_every_boot_physical_history_policy(self):
-  self.assertIn('kDisplayCleanupRevision = 11',MAIN); self.assertIn('bootRecovery && !fullClearUsed_',CONTROLLER); render=CONTROLLER[CONTROLLER.index('bool DisplayCoordinator::renderIfDirty'):CONTROLLER.index('bool DisplayCoordinator::renderWhiteTest')]; self.assertEqual(render.count('epd_fullclear'),1)
+  self.assertIn('kDisplayCleanupRevision = 11',MAIN); self.assertIn('bootRecovery && firstUsableFrame && !fullClearUsed_',CONTROLLER); render=CONTROLLER[CONTROLLER.index('bool DisplayCoordinator::renderIfDirty'):CONTROLLER.index('bool DisplayCoordinator::renderWhiteTest')]; self.assertEqual(render.count('epd_fullclear'),1)
   setup=MAIN[MAIN.index('void setup()'):MAIN.index('void loop()')]
   self.assertGreaterEqual(setup.count('bootCleanupPending = true'),2)
   self.assertIn('policy=EVERY_BOOT',setup)
-  self.assertIn('usable destination first',setup)
-  self.assertIn('kBootRecoveryGraceMs',CONTROLLER)
+  self.assertIn('cleanup completes',setup)
+  self.assertNotIn('kBootRecoveryGraceMs',CONTROLLER)
+  self.assertIn('fullPageTransition',render)
+  self.assertLess(render.index('epd_fullclear'),render.index('epd_hl_update_screen'))
   self.assertNotIn('bootCleanupPending = storedRevision != kDisplayCleanupRevision',setup)
   self.assertNotIn('revision-gated cleanup',MAIN)
   self.assertIn('manualFullRefresh',CONTROLLER); self.assertIn('renderWhiteTest',CONTROLLER)

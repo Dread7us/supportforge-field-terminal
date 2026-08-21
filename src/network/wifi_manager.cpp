@@ -10,6 +10,25 @@ constexpr uint32_t kRetryMs = 15000;
 bool reached(uint32_t now, uint32_t deadline) {
   return static_cast<int32_t>(now - deadline) >= 0;
 }
+
+uint8_t signalBucket(int16_t rssi) {
+  return rssi >= -55 ? 4 : (rssi >= -67 ? 3 : (rssi >= -78 ? 2 : 1));
+}
+
+uint8_t stableSignalBucket(uint8_t published, int16_t rssi) {
+  constexpr int16_t kHysteresisDbm = 3;
+  if (!published) return signalBucket(rssi);
+  if (published == 4) return rssi < -55 - kHysteresisDbm ? 3 : 4;
+  if (published == 3) {
+    if (rssi >= -55 + kHysteresisDbm) return 4;
+    return rssi < -67 - kHysteresisDbm ? 2 : 3;
+  }
+  if (published == 2) {
+    if (rssi >= -67 + kHysteresisDbm) return 3;
+    return rssi < -78 - kHysteresisDbm ? 1 : 2;
+  }
+  return rssi >= -78 + kHysteresisDbm ? 2 : 1;
+}
 }
 
 const char* stateName(State state) {
@@ -72,9 +91,14 @@ void WifiManager::publish(State state, bool connected) {
   snapshot_.rssiAvailable = connected;
   if (connected) {
     const int16_t rssi = WiFi.RSSI();
-    changed = changed || snapshot_.rssi != rssi;
+    // Keep the latest diagnostic value, but only publish a UI version when the
+    // hysteretic four-bar icon changes. Raw RSSI commonly jitters every poll;
+    // treating each dBm as material would create a continuous GC16 redraw loop.
+    const uint8_t nextSignalBucket = stableSignalBucket(publishedSignalBucket_, rssi);
+    changed = changed || publishedSignalBucket_ != nextSignalBucket;
+    publishedSignalBucket_ = nextSignalBucket;
     snapshot_.rssi = rssi;
-  }
+  } else publishedSignalBucket_ = 0;
   if (changed) ++snapshot_.version;
   xSemaphoreGive(mutex_);
 }
