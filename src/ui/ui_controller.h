@@ -58,11 +58,14 @@ class DisplayCoordinator {
   bool hasPresentedPage_ = false;
   Page lastPresentedPage_ = Page::Home;
   bool failedUpdateRetryUsed_ = false;
+  bool failedUpdateNeedsRecoveryCleanup_ = false;
+  bool automaticCleanupUsed_ = false;
+  uint32_t lastAutomaticCleanupMs_ = 0;
   uint32_t renderRequestedCount_ = 0, renderRenderedCount_ = 0;
   uint32_t renderCoalescedCount_ = 0, lastRenderDurationMs_ = 0;
   uint32_t pendingSinceMs_ = 0, lastRenderWaitMs_ = 0;
   uint32_t navigationRequestedMs_ = 0, lastNavigationLatencyMs_ = 0;
-  RefreshMode refreshMode_ = RefreshMode::Balanced;
+  RefreshMode refreshMode_ = RefreshMode::QuickNavigation;
   uint32_t lastGc16DurationMs_ = 0, lastFullCleanupDurationMs_ = 0;
   uint32_t lastPageTransitionDurationMs_ = 0, lastTouchToActionMs_ = 0;
   Preferences preferences_;

@@ -16,6 +16,7 @@ constexpr size_t kFramebufferBytes = spec::kFramebufferStrideBytes * spec::kPhys
 constexpr size_t kGuardBytes = 64;
 constexpr uint8_t kGuardPattern = 0xA5;
 constexpr uint32_t kManualRefreshLimitMs = 45000;
+constexpr uint32_t kBalancedCleanupCooldownMs = 5UL * 60UL * 1000UL;
 static_assert(spec::kFramebufferBitsPerPixel == 4, "renderer requires packed 4-bpp EPDiy frames");
 static_assert(spec::kFramebufferStrideBytes * 2 == spec::kPhysicalWidth,
               "packed framebuffer stride must contain exactly two pixels per byte");
@@ -43,9 +44,9 @@ bool DisplayCoordinator::begin() {
     memset(compositionBuffer_ + kFramebufferBytes, kGuardPattern, kGuardBytes);
   }
   if (preferences_.begin("sf_display", false)) {
-    const uint8_t stored = preferences_.getUChar("refresh_mode", static_cast<uint8_t>(RefreshMode::Balanced));
+    const uint8_t stored = preferences_.getUChar("refresh_mode", static_cast<uint8_t>(RefreshMode::QuickNavigation));
     refreshMode_ = stored <= static_cast<uint8_t>(RefreshMode::BeautifulClean)
-        ? static_cast<RefreshMode>(stored) : RefreshMode::Balanced;
+        ? static_cast<RefreshMode>(stored) : RefreshMode::QuickNavigation;
   }
   Serial.printf("DISPLAY refresh_mode=%s persistence=NVS immediate=YES\n", refreshModeName(refreshMode_));
   initialized_ = epd_hl_get_framebuffer(&gDisplayState) != nullptr && compositionBuffer_ != nullptr;
@@ -149,13 +150,19 @@ bool DisplayCoordinator::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
   const bool firstUsableFrame = !hasPresentedPage_;
   const bool fullPageTransition = renderingPriority == RenderPriority::Navigation &&
       hasPresentedPage_ && lastPresentedPage_ != snapshot_.page;
-  // A known-white composition buffer and a GC16 white pre-pass only synchronize
-  // software pixels; neither proves that this panel released retained pigment.
-  // Physical qualification therefore requires EPDiy's hardware cleanup sequence
-  // once before the first usable frame and once per accepted page transition in
-  // every selectable mode. Cosmetic telemetry/input/timer renders never enter it.
-  const bool cleanupThisRender = (bootRecovery && firstUsableFrame && !fullClearUsed_) ||
-      fullPageTransition;
+  const bool bootCleanup = bootRecovery && firstUsableFrame && !fullClearUsed_;
+  // A failed physical GC16 update is the only automatic fault-recovery cause.
+  // It is consumed by one retry and is never converted into a cleanup queue.
+  const bool faultRecoveryCleanup = failedUpdateNeedsRecoveryCleanup_;
+  const bool balancedCleanupAvailable = !automaticCleanupUsed_ ||
+      nowMs - lastAutomaticCleanupMs_ >= kBalancedCleanupCooldownMs;
+  const bool modeNavigationCleanup = fullPageTransition && !failedUpdateRetryUsed_ &&
+      (refreshMode_ == RefreshMode::BeautifulClean ||
+       (refreshMode_ == RefreshMode::Balanced && balancedCleanupAvailable));
+  // QUICK navigation is always one full-frame GC16 operation. BALANCED cleanup
+  // is bounded by a cooldown; BEAUTIFUL performs at most one cleanup for an
+  // actual page replacement. Cosmetic updates cannot satisfy any predicate.
+  const bool cleanupThisRender = bootCleanup || faultRecoveryCleanup || modeNavigationCleanup;
   bool displayPowered = false;
   if (cleanupThisRender) {
     // The high-level back buffer starts white and cannot know the panel's
@@ -166,6 +173,11 @@ bool DisplayCoordinator::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
     const uint32_t cleanupStartedMs = millis();
     noteCleanupStarted();
     epd_fullclear(&gDisplayState, epd_ambient_temperature());
+    if (modeNavigationCleanup) {
+      automaticCleanupUsed_ = true;
+      lastAutomaticCleanupMs_ = nowMs;
+    }
+    failedUpdateNeedsRecoveryCleanup_ = false;
     lastFullCleanupDurationMs_ = millis() - cleanupStartedMs;
     Serial.println("DISPLAY cleanup=COMPLETE method=LILYGO_EPD_FULLCLEAR");
   }
@@ -214,8 +226,13 @@ bool DisplayCoordinator::renderIfDirty(uint32_t nowMs, bool bootRecovery) {
     lastPresentedPage_ = snapshot_.page;
     hasPresentedPage_ = true;
     failedUpdateRetryUsed_ = false;
+    failedUpdateNeedsRecoveryCleanup_ = false;
   } else if (!failedUpdateRetryUsed_) {
     failedUpdateRetryUsed_ = true;
+    // If this attempt already physically cleaned, another cleanup would chain
+    // slow cycles without adding recovery value. Otherwise the one retry gets
+    // the narrowly guarded fault-recovery cleanup.
+    failedUpdateNeedsRecoveryCleanup_ = !cleanupThisRender;
     requestRender(renderingPriority);
     Serial.println("DISPLAY retry=QUEUED limit=ONE");
   } else {

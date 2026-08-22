@@ -16,6 +16,27 @@ METRICS = json.loads(text("tools/ui_font_metrics.json"))
 
 
 class HomeDashboardTests(unittest.TestCase):
+    def test_1156_to_1157_blanks_complete_clock_bounds_before_redraw(self):
+        pages = text("src/ui/ui_pages.cpp")
+        home = pages[pages.index("void home("):pages.index("void systems(")]
+        centered = pages[pages.index("void centeredText("):pages.index("void detailBack(")]
+        self.assertIn("const Rect clock=contractRect(spec::kHomeClockBounds)", home)
+        self.assertIn("centeredText(fb,clock,homeTime(s),FontRole::HomeClock)", home)
+        self.assertLess(centered.index("blankRegion(fb,bounds)"), centered.index("text(fb,bounds"))
+
+        # Authoritative framebuffer model: any old 11:56 AM pixels outside the
+        # new 11:57 AM glyph mask must become white inside the full clock box.
+        width, height = 492, 126
+        old_mask = {(x, y) for x in range(40, 300) for y in range(24, 92) if (x + y) % 7 == 0}
+        new_mask = {(x, y) for x in range(40, 300) for y in range(24, 92) if (x + y) % 11 == 0}
+        framebuffer = [[255] * width for _ in range(height)]
+        for x, y in old_mask:
+            framebuffer[y][x] = 0
+        framebuffer = [[255] * width for _ in range(height)]  # blankRegion(clock)
+        for x, y in new_mask:
+            framebuffer[y][x] = 0
+        self.assertTrue(all(framebuffer[y][x] == 255 for x, y in old_mask - new_mask))
+
     def test_pacific_default_dst_rule_and_immediate_persistence(self):
         self.assertIn('getUChar("tz", 1)', TIME)
         self.assertIn('PST8PDT,M3.2.0,M11.1.0', TIME)

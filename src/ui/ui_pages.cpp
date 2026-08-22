@@ -51,18 +51,19 @@ String observed(Presence p) {
 }
 
 String batteryStatus(const UiSnapshot& s) {
-  if (!s.batteryPercentAvailable) return battery::stateName(s.batteryState);
-  const String percent = String(s.batteryPercent) + "%";
-  if (s.batteryState == battery::State::Charging) return percent + " CHARGING";
-  if (s.batteryState == battery::State::Full) return percent + " FULL";
-  if (s.batteryState == battery::State::Verifying) return percent + " VERIFYING";
-  if (s.batteryState == battery::State::Stale) return percent + " STALE";
+  const battery::BatteryVisualModel& visual = s.batteryVisual;
+  if (!visual.percentAvailable) return battery::stateName(visual.state);
+  const String percent = String(visual.percent) + "%";
+  if (visual.state == battery::State::Charging) return percent + " CHARGING";
+  if (visual.state == battery::State::Full) return percent + " FULL";
+  if (visual.state == battery::State::Verifying) return percent + " VERIFYING";
+  if (visual.state == battery::State::Stale) return percent + " STALE";
   return percent;
 }
 
 const char* batterySocFreshness(const UiSnapshot& s) {
-  if (s.batteryPercentAvailable && s.batterySampleValid) return "LIVE";
-  if (s.batteryPercentAvailable) return "LKG";
+  if (s.batteryVisual.percentAvailable && s.batterySampleValid) return "LIVE";
+  if (s.batteryVisual.percentAvailable) return "LKG";
   return "STALE";
 }
 
@@ -80,8 +81,30 @@ String batteryElectrical(const UiSnapshot& s) {
 }
 
 String batteryCapacity(const UiSnapshot& s) {
-  return s.batteryCapacityAvailable ? String(s.batteryRemainingCapacityMah) + " / " +
-      String(s.batteryFullChargeCapacityMah) + " MAH" : "--";
+  const String remaining = s.batteryRemainingCapacityStatus == battery::CapacityFieldStatus::Unavailable
+      ? "--" : String(s.batteryRemainingCapacityMah);
+  const String full = s.batteryFullChargeCapacityStatus == battery::CapacityFieldStatus::Unavailable
+      ? "--" : String(s.batteryFullChargeCapacityMah);
+  return remaining + " / " + full + " MAH";
+}
+
+String batteryRawSoc(const UiSnapshot& s) {
+  return s.batteryRawSocAvailable ? String(s.batteryRawSocPercent) + "%" : "--";
+}
+
+String batteryCapacityRatio(const UiSnapshot& s) {
+  return s.batteryCapacityRatioAvailable ? String(s.batteryCapacityRatioPercent) + "%" : "--";
+}
+
+String batteryExplanation(const UiSnapshot& s) {
+  if (s.batteryDiagnosis != battery::Diagnosis::CapacityDataUnavailable)
+    return battery::diagnosisName(s.batteryDiagnosis);
+  String result = s.batteryChargePhase == battery::ChargePhase::Complete
+      ? "CHARGER COMPLETE; " : "";
+  result += s.batteryRawSocAvailable ? String("SOC ") + s.batteryRawSocPercent + "%"
+                                    : "SOC UNAVAILABLE";
+  result += "; CAPACITY DATA UNAVAILABLE";
+  return result;
 }
 
 String weatherTemperature(const UiSnapshot& s) {
@@ -187,6 +210,7 @@ String hdopQuality(const location::Snapshot& gps){
 }
 
 void centeredText(uint8_t* fb,Rect bounds,const String& value,FontRole role,uint8_t color=kInk){
+  blankRegion(fb,bounds);
   const String shown=fittedText(value,role,bounds.w);
   const int x=bounds.x+(bounds.w-textWidth(shown,role))/2;
   text(fb,bounds,max(bounds.x,x),centeredBaseline(bounds,role),shown,role,color);
@@ -309,18 +333,20 @@ void weatherDetail(uint8_t* fb,const UiSnapshot& s){
 
 void batteryDetail(uint8_t* fb,const UiSnapshot& s){
   appBar(fb,s,"BATTERY");
-  const String primary=s.batteryPercentAvailable?String(s.batteryPercent)+"%":"--";
+  const String primary=s.batteryVisual.percentAvailable?String(s.batteryVisual.percent)+"%":"--";
   centeredText(fb,{24,128,492,94},primary,FontRole::PageHeading);
   centeredText(fb,{24,214,492,40},batteryChargeInterpretation(s),FontRole::CardHeading);
-  batteryIcon(fb,{90,294,360,124},s.batteryState,s.batteryPercentAvailable,s.batteryPercent,kInk);
-  roundedRect(fb,{24,438,492,300},14,kPaper,kInk);
-  labeledRow(fb,{48,448,444,38},"PERCENT / QUALITY",primary+" / "+batterySocFreshness(s));
-  labeledRow(fb,{48,486,444,38},"GAUGE UPDATE",s.batteryLastSampleMs?age(millis(),s.batteryLastSampleMs):"--");
-  labeledRow(fb,{48,524,444,38},"CHARGER INPUT",battery::chargerConnectionName(s.batteryChargerConnection));
-  labeledRow(fb,{48,562,444,38},"CHARGE STATE",batteryChargeInterpretation(s));
+  batteryIcon(fb,{90,294,360,124},s.batteryVisual,kInk);
+  roundedRect(fb,{24,438,492,338},14,kPaper,kInk);
+  labeledRow(fb,{48,448,444,38},"DISPLAYED SOURCE",battery::displaySourceName(s.batteryVisual.source));
+  labeledRow(fb,{48,486,444,38},"RAW SOC / RATIO",batteryRawSoc(s)+" / "+batteryCapacityRatio(s));
+  labeledRow(fb,{48,524,444,38},"FRESHNESS",String(batterySocFreshness(s))+" / "+
+      (s.batteryLastSampleMs?age(millis(),s.batteryLastSampleMs):"--"));
+  labeledRow(fb,{48,562,444,38},"INPUT / CHARGE",String(battery::chargerConnectionName(s.batteryChargerConnection))+" / "+
+      batteryChargeInterpretation(s));
   labeledRow(fb,{48,600,444,38},"VOLTAGE / CURRENT",batteryElectrical(s));
   labeledRow(fb,{48,638,444,38},"REMAIN / FULL",batteryCapacity(s));
-  labeledRow(fb,{48,676,444,48},"EXPLANATION",battery::diagnosisName(s.batteryDiagnosis),false);
+  labeledRow(fb,{48,676,444,76},"EXPLANATION",batteryExplanation(s),false);
   detailBack(fb);
 }
 
@@ -330,7 +356,7 @@ void vehicleMotion(uint8_t* fb,const UiSnapshot& s){
   statusPill(fb,kVehicleGpsStateBounds,String("GPS ")+location::stateName(s.location.state),true);
   // Clear the entire dominant metric region on every composition so a shorter
   // value or "--" can never retain pixels from a prior three-digit speed.
-  epd_fill_rect({kVehicleSpeedBounds.x,kVehicleSpeedBounds.y,kVehicleSpeedBounds.w,kVehicleSpeedBounds.h},kPaper,fb);
+  blankRegion(fb,kVehicleSpeedBounds);
   centeredText(fb,kVehicleSpeedBounds,speed,FontRole::VehicleSpeed,kInk);
   centeredText(fb,kVehicleSpeedUnitBounds,location::speedUnitName(s.location.speedUnit),FontRole::CardHeading);
   centeredText(fb,kVehicleMovementBounds,location::motionStateName(s.location),FontRole::PageHeading);
@@ -354,8 +380,7 @@ void altimeter(uint8_t* fb,const UiSnapshot& s){
   roundedRect(fb,{24,166,492,238},16,kPaper,kInk);
   // Explicitly clear and clip the dominant metric on every full-white
   // composition so transitions such as 12,345 -> -- cannot retain stale ink.
-  epd_fill_rect({kAltimeterMetricBounds.x,kAltimeterMetricBounds.y,
-                 kAltimeterMetricBounds.w,kAltimeterMetricBounds.h},kPaper,fb);
+  blankRegion(fb,kAltimeterMetricBounds);
   centeredText(fb,kAltimeterMetricBounds,gpsElevationValue(s.location,false),
                FontRole::AltimeterMetric,kInk);
   centeredText(fb,{36,346,468,38},location::elevationUnitName(s.location.elevationUnit),
@@ -413,7 +438,7 @@ void home(uint8_t* fb,const UiSnapshot& s){
   metricTile(fb,contractRect(spec::kHomeCards[3]),Icon::Wifi,"WI-FI / NETWORK",
       network::stateName(s.wifi.state),homeWifiDetail(s.wifi));
   metricTile(fb,contractRect(spec::kHomeCards[4]),Icon::Battery,"BATTERY PERCENT",
-      s.batteryPercentAvailable?String(s.batteryPercent)+"%":"PERCENT UNAVAILABLE",
+      s.batteryVisual.percentAvailable?String(s.batteryVisual.percent)+"%":"PERCENT UNAVAILABLE",
       String("CHARGE STATE ")+batteryChargeInterpretation(s));
 }
 
@@ -797,8 +822,8 @@ void displayRefreshMode(uint8_t* fb,const UiSnapshot& s){
   appBar(fb,s,"DISPLAY REFRESH MODE");
   text(fb,{24,112,492,44},24,142,"SELECT QUALITY VERSUS SPEED",FontRole::CardHeading,kInk);
   const char* titles[]={"QUICK","BALANCED","BEAUTIFUL"};
-  const char* line1[]={"Physical cleanup on every page change.","Physical cleanup on every page change.","Physical cleanup on every page change."};
-  const char* line2[]={"Fastest in-page GC16; no ghosting accepted.","In-page telemetry uses one normal GC16.","Quality priority; transitions remain bounded."};
+  const char* line1[]={"One full-screen GC16; no navigation cleanup.","Full GC16; significant cleanup has cooldown.","One cleanup before each page replacement."};
+  const char* line2[]={"Fast default; precise dynamic blanking.","Responsive; repeated navigation cannot chain.","Maximum cleanup; in-page updates stay fast."};
   for(uint8_t i=0;i<3;++i){
     const Rect b=kRefreshModeActions[i];const bool selected=static_cast<uint8_t>(s.refreshMode)==i;
     const String title=selected?String(titles[i])+" - SELECTED":String(titles[i]);

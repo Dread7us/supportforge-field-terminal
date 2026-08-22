@@ -78,7 +78,7 @@ class UiReliabilityPassTests(unittest.TestCase):
     def test_wifi_states_are_stable_dark_and_have_no_disconnected_slash(self):
         wifi = COMPONENTS[COMPONENTS.index("void wifiIcon("):
                           COMPONENTS.index("void appBar(")]
-        self.assertIn("epd_fill_rect({bounds.x,bounds.y,bounds.w,bounds.h},kPaper,fb)", wifi)
+        self.assertIn("blankRegion(fb, bounds)", wifi)
         self.assertIn("kBarCount=4", wifi)
         self.assertIn("index<bars", wifi)
         self.assertIn("epd_fill_rect", wifi)

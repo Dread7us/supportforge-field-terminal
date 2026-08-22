@@ -24,6 +24,57 @@ Official component references used for the bounded battery contract:
 - TI BQ25896 product page and datasheet: <https://www.ti.com/product/BQ25896>
 - LILYGO T5 E-Paper S3 Pro repository: <https://github.com/Xinyuan-LilyGO/T5S3-4.7-e-paper-PRO>
 
+### BQ27220 capacity-model evidence and write prohibition
+
+The official product specification identifies the fitted battery as **3.7 V /
+1500 mAh**. TI's BQ27220 standard commands report RemainingCapacity (`0x10`),
+FullChargeCapacity (`0x12`), and DesignCapacity (`0x3C`) in **mAh**; they are not
+project-specific scaled units. A live observation such as **2386 mAh remaining /
+3000 mAh full** therefore exceeds the documented physical capacity and is
+classified exactly as **BATTERY GAUGE CAPACITY MODEL INVALID**. The raw gauge SOC
+may still be displayed as an explicitly identified observation, but the invalid
+capacity values are excluded from ratio, full-charge, and confirmed-partial-charge
+inference.
+
+TI's BQ27220 technical reference manual also documents a default CEDV profile with
+3000 mAh Full Charge Capacity and Design Capacity. This makes a live 3000 mAh model
+consistent with an unmodified/default profile; it is not evidence that this unit
+contains a 3000 mAh pack. TI states that RAM data memory must be initialized by the
+application (or production OTP programmed), Learned FCC should initialize from
+Design Capacity, Qmax must come from cell-manufacturer data, and the CEDV profile
+must match the cell's characteristics.
+
+At official H752-01 commit `587632e0c6ac327741b8c5e0d14c9e29f154b101`:
+
+- `examples/factory/main/main.cpp` calls `bq27220.init()` during factory peripheral
+  initialization.
+- `bq27220.h` makes that no-argument call default to `gauge_data_memory`.
+- `bq27220_data_memory.c` sets Full Charge Capacity = 1500 mAh, Design Capacity =
+  1500 mAh, and `FCC_LIM = 1`, plus a complete set of CEDV parameters.
+- `BQ27220::init()` is not read-only: it unseals for protected inspection and, on
+  mismatch, may reset, obtain full access, enter configuration update, write and
+  verify data memory, exit with reinitialization, and reseal.
+
+Those sources prove LILYGO's H752-01 factory intent, but they do **not** prove the
+installed H752-02 pack manufacturer/part number, cell characterization, PCB
+revision, prior provisioning history, or that blindly replaying the H752-01 image
+is safe for this physical unit. Consequently **no gauge recovery write plan is
+approved in this task**: do not invoke the official `init()` path, unseal, reset,
+enter configuration update, calibrate, relearn, or alter OTP/data memory.
+
+The safe next evidence is a clear, full-frame photograph of the installed battery
+pouch label and its connector/wiring, plus PCB silkscreen near the battery connector
+and gauge. The photographs must make legible: battery manufacturer and exact part
+number; nominal voltage; rated and typical capacity in mAh and Wh; maximum charge
+voltage; chemistry/model/date/lot markings; connector type, wire count, polarity,
+and any indication of parallel cells; and the board model/revision marking. Open or
+disconnect the pack only under the manufacturer's service procedure; do not probe
+the gauge or battery. Once exact pack identity and matching manufacturer-supported
+cell/CEDV values are established, a separate one-time recovery proposal must be
+reviewed before execution and must include complete pre-write backup/readback,
+write-by-write rationale, power-loss recovery behavior, post-write verification,
+and charge/discharge validation limits.
+
 The firmware's `0x6B` BQ25896 address is the explicit fitted-board/task contract
 to be checked on the device. It must not be generalized from a different charger
 variant or silently changed based only on a generic datasheet address.
@@ -178,9 +229,12 @@ and current-Pro display tests rather than guessing.
   ownership first. This is a candidate-profile mitigation, not proof that the
   SKU's final electrical map is confirmed.
 - GPS diagnostics redact NMEA payloads and coordinates by default.
-- Battery sampling is read-only and bounded. BQ27220 `0x55` StateOfCharge `0x2C`
-  is read twice, little-endian, and accepted only when both values agree in
-  `0..100`. BQ25896 board address `0x6B` `REG0B` is read for `CHRG_STAT[4:3]`
+- Battery sampling is read-only and bounded. BQ27220 `0x55` StateOfCharge `0x2C`,
+  voltage, current, RemainingCapacity, FullChargeCapacity, and DesignCapacity are
+  read in three correlated little-endian frames. SOC is accepted only in `0..100`;
+  capacity ratio is usable only when stable RM/FCC are physically possible and
+  stable DesignCapacity exactly matches 1500 mAh. BQ25896 board address `0x6B`
+  `REG0B` is read for `CHRG_STAT[4:3]`
   and `VBUS_STAT[7:5]`; OTG output (`111`) is not reported as charger input.
   There are no gauge/charger configuration, control, seal, reset, calibration, or
   data-memory writes. Sampling is 90 seconds normally, 45 seconds while charging,
@@ -188,6 +242,8 @@ and current-Pro display tests rather than guessing.
   across a failed attempt while the state reports error; after 270 seconds without
   a valid SOC the UI reports stale and hides the percentage. This contract does
   not prove pack capacity accuracy or replace physical charge/discharge testing.
+  Impossible capacity observations are retained for transparent diagnostics but
+  never treated as proof of a larger pack, full charge, or genuine partial charge.
 - The clock defaults to UTC/24-hour, uses NTP after existing Wi-Fi connectivity,
   and treats a PCF8563 voltage-low indication as invalid. Weather is an isolated,
   Wi-Fi-passive Open-Meteo consumer with sanitized diagnostics and a 15-minute

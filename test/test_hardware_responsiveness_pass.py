@@ -110,10 +110,10 @@ class HardwareResponsivenessPassTests(unittest.TestCase):
         self.assertIn("percentAvailable = false", BATTERY)
         self.assertIn("kGaugeAddress = 0x55", BATTERY)
         self.assertIn("kStateOfChargeRegister = 0x2C", BATTERY)
-        self.assertIn("decodeLittleEndianWord(first[0], first[1])", BATTERY)
-        self.assertIn("uint8_t first[2]{}, second[2]{}, third[2]{}", BATTERY)
-        self.assertIn("thirdValue == secondValue || thirdValue == firstValue", BATTERY)
-        self.assertIn("retainedPercentFresh", BATTERY)
+        self.assertIn("kEvidenceSampleCount = 3", BATTERY)
+        self.assertIn("EvidenceFrame frames[kEvidenceSampleCount]", BATTERY)
+        self.assertIn("stableWords(frames, &EvidenceFrame::soc", BATTERY)
+        self.assertIn("snapshot_.displaySource = DisplaySource::Unavailable", BATTERY)
         self.assertIn("kChargerAddress = 0x6B", BATTERY)
         self.assertIn("kChargerStatusRegister = 0x0B", BATTERY)
         self.assertIn("kChargeStatusMask = 0x18", BATTERY)
@@ -122,12 +122,13 @@ class HardwareResponsivenessPassTests(unittest.TestCase):
                           COMPONENTS.index("void circle(")]
         self.assertIn('const String unknown = "--"', icon)
         self.assertIn("epd_fill_rect({body.x, body.y, body.w, body.h}, kPaper", icon)
-        self.assertIn("text(fb, filled, labelX", icon)
-        self.assertIn("text(fb, unfilled, labelX", icon)
-        self.assertIn("state == battery::State::Charging", icon)
+        self.assertIn("text(fb, filledLabel, labelX", icon)
+        self.assertIn("text(fb, unfilledLabel, labelX", icon)
+        self.assertIn("if (model.charging)", icon)
         self.assertIn("void batteryDetail", PAGES)
         self.assertIn('return "LKG"', PAGES)
-        self.assertIn('"PERCENT / QUALITY",primary+" / "+batterySocFreshness(s)', PAGES)
+        self.assertIn('"DISPLAYED SOURCE",battery::displaySourceName', PAGES)
+        self.assertIn('"RAW SOC / RATIO",batteryRawSoc(s)+" / "+batteryCapacityRatio(s)', PAGES)
 
     def test_unverified_physical_controls_are_not_exposed(self):
         # Retained current-Pro EPD source assigns IO48 to CKV, so it cannot be

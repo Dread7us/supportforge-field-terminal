@@ -78,18 +78,17 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         self.assertIn('kMaximumFreshAgeMs = maximumFreshAgeMs()', BATTERY)
         self.assertIn('kGaugeAddress = 0x55', BATTERY)
         self.assertIn('kStateOfChargeRegister = 0x2C', BATTERY)
-        for command in ('kVoltageRegister = 0x08', 'kRemainingCapacityRegister = 0x0C',
+        for command in ('kVoltageRegister = 0x08', 'kRemainingCapacityRegister = 0x10',
                         'kFullChargeCapacityRegister = 0x12', 'kAverageCurrentRegister = 0x14'):
             self.assertIn(command, BATTERY)
-        self.assertIn('decodeLittleEndianWord(first[0], first[1])', BATTERY)
-        self.assertIn('uint8_t first[2]{}, second[2]{}, third[2]{}', BATTERY)
-        self.assertIn('thirdValue == secondValue || thirdValue == firstValue', BATTERY)
-        self.assertIn('abs(static_cast<int>(thirdValue) - static_cast<int>(secondValue)) <= 1', BATTERY)
+        self.assertNotIn('kRemainingCapacityRegister = 0x0C', BATTERY)
+        self.assertIn('kEvidenceSampleCount = 3', BATTERY)
+        self.assertIn('EvidenceFrame frames[kEvidenceSampleCount]', BATTERY)
+        self.assertIn('stableWords(frames, &EvidenceFrame::soc', BATTERY)
         self.assertIn('hasValidSample', BATTERY + BATTERY_H)
         self.assertIn('maximumFreshAgeMs() { return 270UL * 1000UL; }', BATTERY_H)
-        self.assertIn('retainedPercentFresh', BATTERY)
-        self.assertIn('snapshot_.percentAvailable = retainedPercentFresh', BATTERY)
-        self.assertIn('consecutiveSocFailures_ >= kFailuresBeforeError ? State::Error : State::Unknown', BATTERY)
+        self.assertIn('snapshot_.displaySource = DisplaySource::Unavailable', BATTERY)
+        self.assertIn('consecutiveSocFailures_ >= kFailuresBeforeError ? State::Error : State::Stale', BATTERY)
         self.assertIn('consecutiveSocFailures_ = 0', BATTERY)
         self.assertIn('recoveringSoc ? kRecoverySampleIntervalMs', BATTERY)
         self.assertIn('kChargerAddress = 0x6B', BATTERY)
@@ -97,14 +96,14 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         self.assertIn('(register0b & kChargeStatusMask) >> 3', BATTERY)
         self.assertIn('nearFullThresholdPercent() { return 95; }', BATTERY_H)
         self.assertIn('reconcileStateOfCharge', BATTERY + BATTERY_H)
-        self.assertIn('socFresh && validPercent(percent) && percent >= nearFullThresholdPercent()', BATTERY)
-        read_helper = BATTERY[BATTERY.index('bool readRegister('):BATTERY.index('bool readSoc(')]
+        self.assertIn('fullEvidence && percent == 100', BATTERY)
+        read_helper = BATTERY[BATTERY.index('bool readRegister('):BATTERY.index('bool readGaugeWord(')]
         self.assertEqual(read_helper.count('Wire.write(reg)'), 1)
         self.assertIn('Wire.endTransmission(false)', read_helper)
         self.assertIn('Wire.requestFrom(address', read_helper)
         self.assertNotRegex(BATTERY.lower(), r'\b(unseal|seal|reset|calibrat|data.?memory|control.?subcommand)\s*\(')
         self.assertEqual(BATTERY.count('Wire.write('), 1)
-        self.assertIn('batteryState', UI_STATE)
+        self.assertIn('a.batteryVisual.state != b.batteryVisual.state', UI_STATE)
         self.assertIn('battery::stateName', PAGES)
         self.assertIn('freshness=%s', BATTERY)
         self.assertNotIn('percent=%s', BATTERY)
@@ -112,8 +111,8 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         self.assertIn('return "LKG"', PAGES)
 
     def test_battery_details_separate_soc_quality_connection_and_charge_state(self):
-        for label in ('"PERCENT / QUALITY"', '"GAUGE UPDATE"', '"CHARGER INPUT"',
-                      '"CHARGE STATE"', '"VOLTAGE / CURRENT"', '"REMAIN / FULL"',
+        for label in ('"DISPLAYED SOURCE"', '"RAW SOC / RATIO"', '"FRESHNESS"',
+                      '"INPUT / CHARGE"', '"VOLTAGE / CURRENT"', '"REMAIN / FULL"',
                       '"EXPLANATION"'):
             self.assertIn(label, PAGES)
         for quality in ('"LIVE"', '"LKG"', '"STALE"'):
@@ -133,10 +132,28 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         self.assertIn('return battery::chargePhaseName(s.batteryChargePhase)',
                       charge_interpretation)
         for diagnosis in ('BatteryNearReportedSoc', 'ChargerNotContinuing', 'GaugeStale',
-                          'ChargeCompleteBelowThreshold', 'GaugeModelNeedsVerification'):
+                          'GenuinePartialCharge', 'GaugeModelMismatch', 'CapacityDataUnavailable',
+                          'CapacityModelInvalid'):
             self.assertIn(f'Diagnosis::{diagnosis}', BATTERY)
-        self.assertIn('CHARGE COMPLETE BELOW 95%; VERIFY GAUGE MODEL', BATTERY)
-        self.assertIn('static_cast<int16_t>(averageCurrent)', BATTERY)
+        self.assertIn('CAPACITY DATA UNAVAILABLE', BATTERY)
+        self.assertIn('GAUGE MODEL MISMATCH: VALID CAPACITY RATIO CONTRADICTS SOC', BATTERY)
+        self.assertIn('static_cast<int16_t>(currentWord)', BATTERY)
+
+    def test_eighty_percent_is_only_replaced_by_verified_full_capacity_evidence(self):
+        self.assertIn('kFullVoltageEvidenceMv = 4150', BATTERY)
+        self.assertIn('kCapacityAgreementTolerancePercent = 3', BATTERY)
+        self.assertIn('kFullCurrentEvidenceMa = 100', BATTERY)
+        for evidence in ('ChargePhase::Complete', 'voltage >= kFullVoltageEvidenceMv',
+                         'capacityProvesFull', 'DisplaySource::CapacityRatio',
+                         'Diagnosis::GaugeModelMismatch', 'Diagnosis::GenuinePartialCharge'):
+            self.assertIn(evidence, BATTERY)
+        self.assertNotIn('snapshot_.percent = 100', BATTERY)
+        self.assertNotIn('percent = 100', BATTERY)
+        self.assertIn('"DISPLAYED SOURCE"', PAGES)
+        self.assertIn('"RAW SOC / RATIO"', PAGES)
+        self.assertIn('"VOLTAGE / CURRENT"', PAGES)
+        self.assertIn('"REMAIN / FULL"', PAGES)
+        self.assertIn('"INPUT / CHARGE"', PAGES)
 
     def test_weather_states_cache_interval_and_guardian_isolation(self):
         for label in ('WX SETUP', 'WX OFFLINE', 'WX ONLINE'):
@@ -174,13 +191,13 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         self.assertIn('contractRect(spec::kHeaderDateBounds)', COMPONENTS)
         self.assertIn('contractRect(spec::kHeaderWifiBounds)', COMPONENTS)
         self.assertIn('contractRect(spec::kHeaderBatteryBounds)', COMPONENTS)
-        self.assertIn('batteryIcon(fb,batteryGlyph,state.batteryState', COMPONENTS)
+        self.assertIn('batteryIcon(fb, batteryGlyph, state.batteryVisual, kInk)', COMPONENTS)
         self.assertIn('chargeStatusVerified', BATTERY)
         self.assertIn('snapshot_.sampleValid = socValid', BATTERY)
         self.assertIn('const State rawChargeState = chargerValid ? classifyChargeStatus(chargerStatus)', BATTERY)
         self.assertIn('const State verifiedChargeState = reconcileStateOfCharge(', BATTERY)
         self.assertIn('verifiedChargeState == State::Charging || verifiedChargeState == State::Full', BATTERY)
-        self.assertIn('snapshot_.percentAvailable = socValid || retainedPercentFresh', BATTERY)
+        self.assertIn('snapshot_.percentAvailable = socValid', BATTERY)
         self.assertIn('Page::Settings', MAIN + PAGES)
         for action in ('kDeviceSettingsAction', 'kDateTimeTimezoneAction',
                        'kDateTimeFormatAction', 'kDateTimeSyncAction',
@@ -202,16 +219,15 @@ class TimeBatteryWeatherTests(unittest.TestCase):
         threshold = int(threshold_match.group(1))
         maximum_age_ms = int(maximum_age_match.group(1)) * 1000
 
-        def reconcile(charger_terminated, soc_valid, percent):
-            return "FULL" if charger_terminated and soc_valid and percent >= threshold else "VERIFYING"
+        def reconcile(charger_terminated, full_evidence, percent):
+            return "FULL" if charger_terminated and full_evidence and percent == 100 else "VERIFYING"
 
-        self.assertEqual(reconcile(True, True, threshold), "FULL")
+        self.assertEqual(reconcile(True, True, 100), "FULL")
         self.assertNotEqual(reconcile(True, True, 50), "FULL")
         self.assertEqual(reconcile(True, False, 100), "VERIFYING")
         self.assertTrue(120_000 <= maximum_age_ms)
         self.assertTrue(120_000 <= maximum_age_ms)
         self.assertFalse(maximum_age_ms + 1 <= maximum_age_ms)
-        self.assertIn('nowMs - before.lastSampleMs <= kMaximumFreshAgeMs', BATTERY)
         self.assertIn('nowMs - snapshot_.lastSampleMs > kMaximumFreshAgeMs', BATTERY)
         self.assertIn('snapshot_.percentAvailable = false', BATTERY)
         self.assertIn('snapshot_.state = State::Stale', BATTERY)

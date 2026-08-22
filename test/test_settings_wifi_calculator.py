@@ -40,7 +40,7 @@ class SettingsWifiCalculatorTests(unittest.TestCase):
                             COMPONENTS.index("void text(")]
         self.assertIn("kHorizontalPadding = 16", action)
         self.assertIn("kVerticalPadding = 10", action)
-        self.assertIn("epd_fill_rect({bounds.x, bounds.y, bounds.w, bounds.h}, kPaper, fb)", action)
+        self.assertIn("blankRegion(fb, bounds)", action)
         self.assertIn("centeredBaseline(content, role)", action)
         self.assertNotRegex(action, r"bounds\.y\s*\+\s*\d+.*label")
         content_width = 492 - 32
@@ -185,14 +185,18 @@ class SettingsWifiCalculatorTests(unittest.TestCase):
     def test_battery_text_is_metric_centered_and_full_is_verified(self):
         battery = COMPONENTS[COMPONENTS.index("void batteryIcon("):
                              COMPONENTS.index("void circle(")]
-        self.assertEqual(battery.count("centeredBaseline(interior, FontRole::Caption)"), 2)
+        self.assertEqual(battery.count("centeredBaseline(geometry.label, FontRole::Caption)"), 2)
         self.assertNotIn("interior.y + 16", battery)
         app = COMPONENTS[COMPONENTS.index("void appBar("):
                          COMPONENTS.index("void card(")]
-        self.assertIn("batteryIcon(fb,batteryGlyph,state.batteryState", app)
-        self.assertIn("batteryClip.x+56,spec::kHeaderBaseline-25,80,32", app)
-        self.assertNotIn('batteryStateLabel="CHG"', app)
-        self.assertIn('batteryStateLabel="FULL"', app)
+        self.assertIn("legacy120BatteryGlyph{batteryClip.x + 8, batteryClip.y + 10, 120, 32", app)
+        self.assertIn("legacy96BatteryGlyph{batteryClip.x + 12", app)
+        self.assertIn("const Rect batteryGlyph{batteryClip.x + batteryClip.w - 72", app)
+        self.assertIn("batteryClip.y + (batteryClip.h - 25) / 2, 64, 25", app)
+        self.assertIn("batteryIcon(fb, batteryGlyph, state.batteryVisual, kInk)", app)
+        self.assertNotIn("batteryStateLabel", app)
+        for diagnostic in ('"CHG"', '"FULL"', '"VERIFY"', '"LKG"', '"STALE"'):
+            self.assertNotIn(diagnostic, app)
         self.assertIn("verifiedChargeState == State::Charging || verifiedChargeState == State::Full", BATTERY)
 
     def test_wifi_back_returns_to_the_route_that_opened_settings(self):

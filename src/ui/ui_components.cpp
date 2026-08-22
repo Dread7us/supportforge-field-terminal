@@ -47,6 +47,16 @@ bool inClip(const Rect& clip, int x, int y) {
 
 void clear(uint8_t* fb) { epd_fill_rect({0, 0, kCanvasWidth, kCanvasHeight}, kPaper, fb); }
 
+void blankRegion(uint8_t* fb, Rect bounds) {
+  const int left = max(0, bounds.x);
+  const int top = max(0, bounds.y);
+  const int right = min(kCanvasWidth, bounds.x + bounds.w);
+  const int bottom = min(kCanvasHeight, bounds.y + bounds.h);
+  if (right > left && bottom > top) {
+    epd_fill_rect({left, top, right - left, bottom - top}, kPaper, fb);
+  }
+}
+
 void roundedRect(uint8_t* fb, Rect r, int radius, uint8_t fill, uint8_t stroke) {
   radius = min(radius, min(r.w, r.h) / 2);
   epd_fill_rect({r.x + radius, r.y, r.w - 2 * radius, r.h}, fill, fb);
@@ -96,7 +106,7 @@ void actionButton(uint8_t* fb, Rect bounds, const String& label, bool selected,
   static_assert(kVerticalPadding >= 8, "action labels require safe vertical padding");
   // Buttons are dynamic regions: erase the complete visual bounds first so a
   // shorter replacement label or inverse-state transition cannot retain ink.
-  epd_fill_rect({bounds.x, bounds.y, bounds.w, bounds.h}, kPaper, fb);
+  blankRegion(fb, bounds);
   roundedRect(fb, bounds, kRadiusControl, selected ? kInk : kPaper, kInk);
   const Rect content{bounds.x + kHorizontalPadding, bounds.y + kVerticalPadding,
                      bounds.w - 2 * kHorizontalPadding,
@@ -253,50 +263,91 @@ void selectableCard(uint8_t* fb, Rect b, const String& title,
        fittedText(secondary,FontRole::Caption,b.w-40),FontRole::Caption,fg);
 }
 
-void batteryIcon(uint8_t* fb, Rect bounds, battery::State state,
-                 bool percentAvailable, uint8_t percent, uint8_t color) {
-  // Exact rectangles make the body, terminal, fill, and split-contrast text
-  // independently clipped. Unknown data always leaves a hollow white body.
-  const Rect body{bounds.x, bounds.y, bounds.w - 5, bounds.h};
-  const Rect interior{body.x + 3, body.y + 3, body.w - 6, body.h - 6};
-  const Rect terminal{body.x + body.w, body.y + body.h / 3, 5,
-                      max(2, body.h / 3)};
+BatteryIconGeometry batteryIconGeometry(Rect bounds, bool charging) {
+  const int terminalWidth = max(3, min(6, bounds.w / 12));
+  const int terminalGap = 1;
+  const int outlineInset = bounds.h >= 48 ? 4 : 3;
+  const Rect body{bounds.x, bounds.y, bounds.w - terminalWidth - terminalGap, bounds.h};
+  const Rect interior{body.x + outlineInset, body.y + outlineInset,
+                      body.w - 2 * outlineInset, body.h - 2 * outlineInset};
+  const Rect terminal{body.x + body.w + terminalGap,
+                      body.y + body.h / 3, terminalWidth, max(3, body.h / 3)};
+  // Reserve only a tiny corner for the static charge mark. This is not a
+  // separate status lane: measured Caption text still has 45 px for "100%".
+  const int chargingMarkWidth = charging ? 7 : 0;
+  const Rect chargingMark{interior.x + interior.w - chargingMarkWidth,
+                          interior.y + interior.h - 8, chargingMarkWidth, 8};
+  const Rect labelLane{interior.x, interior.y,
+                       interior.w - chargingMarkWidth, interior.h};
+  BatteryIconGeometry geometry;
+  geometry.bounds = bounds;
+  geometry.body = body;
+  geometry.interior = interior;
+  geometry.label = labelLane;
+  geometry.chargingMark = chargingMark;
+  geometry.terminal = terminal;
+  return geometry;
+}
+
+int batteryFillWidth(const BatteryIconGeometry& geometry,
+                     const battery::BatteryVisualModel& model) {
+  if (!model.percentAvailable || !battery::validPercent(model.percent)) return 0;
+  return (geometry.interior.w * model.percent + 50) / 100;
+}
+
+void batteryIcon(uint8_t* fb, Rect bounds, const battery::BatteryVisualModel& model,
+                 uint8_t color) {
+  // Always erase the complete maximum visual extent, including cap and all text,
+  // before drawing. This covers 100% -> 8%, charging -> idle, and valid -> --.
+  blankRegion(fb, bounds);
+  const BatteryIconGeometry geometry = batteryIconGeometry(bounds, model.charging);
+  const Rect& body = geometry.body;
+  const Rect& interior = geometry.interior;
+  const Rect& terminal = geometry.terminal;
   epd_fill_rect({body.x, body.y, body.w, body.h}, kPaper, fb);
   epd_draw_rect({body.x, body.y, body.w, body.h}, color, fb);
   epd_draw_rect({body.x + 1, body.y + 1, body.w - 2, body.h - 2}, color, fb);
   epd_fill_rect({terminal.x, terminal.y, terminal.w, terminal.h}, color, fb);
-  if (!percentAvailable || !battery::validPercent(percent)) {
+  if (!model.percentAvailable || !battery::validPercent(model.percent)) {
     const String unknown = "--";
-    const int x = interior.x + (interior.w - textWidth(unknown, FontRole::Caption)) / 2;
-    text(fb, interior, x, centeredBaseline(interior, FontRole::Caption),
+    const int x = geometry.label.x +
+        (geometry.label.w - textWidth(unknown, FontRole::Caption)) / 2;
+    text(fb, geometry.label, x, centeredBaseline(geometry.label, FontRole::Caption),
          unknown, FontRole::Caption, kInk);
     return;
   }
-  const uint8_t bounded = min<uint8_t>(percent, 100);
-  const int fillWidth = (interior.w * bounded + 50) / 100;
+  const uint8_t bounded = model.percent;
+  const int fillWidth = batteryFillWidth(geometry, model);
   const Rect filled{interior.x, interior.y, fillWidth, interior.h};
   const Rect unfilled{interior.x + fillWidth, interior.y,
                       interior.w - fillWidth, interior.h};
   if (filled.w > 0) epd_fill_rect({filled.x, filled.y, filled.w, filled.h}, color, fb);
 
-  const String label = String(bounded);
+  const String label = String(bounded) + "%";
   const int labelWidth = textWidth(label, FontRole::Caption);
-  const int labelX = interior.x + (interior.w - labelWidth) / 2;
-  const int labelBaseline = centeredBaseline(interior, FontRole::Caption);
-  if (filled.w > 0) text(fb, filled, labelX, labelBaseline, label, FontRole::Caption, kPaper);
-  if (unfilled.w > 0) text(fb, unfilled, labelX, labelBaseline, label, FontRole::Caption, kInk);
+  const int labelX = geometry.label.x + (geometry.label.w - labelWidth) / 2;
+  const int labelBaseline = centeredBaseline(geometry.label, FontRole::Caption);
+  const Rect filledLabel{filled.x, filled.y, min(filled.w, geometry.label.w), filled.h};
+  const Rect unfilledLabel{max(unfilled.x, geometry.label.x), unfilled.y,
+      max(0, geometry.label.x + geometry.label.w - max(unfilled.x, geometry.label.x)),
+      unfilled.h};
+  if (filledLabel.w > 0) text(fb, filledLabel, labelX, labelBaseline, label, FontRole::Caption, kPaper);
+  if (unfilledLabel.w > 0) text(fb, unfilledLabel, labelX, labelBaseline, label, FontRole::Caption, kInk);
 
-  if (state == battery::State::Charging || state == battery::State::Verifying) {
-    // Static two-tone lightning remains visible over either black fill or white.
-    const int cx = body.x + body.w - 8;
-    for (int offset=-1;offset<=1;++offset) {
-      line(fb, cx + 2 + offset, body.y + 3, cx - 2 + offset, body.y + body.h / 2, kInk);
-      line(fb, cx - 2 + offset, body.y + body.h / 2, cx + 1 + offset, body.y + body.h / 2, kInk);
-      line(fb, cx + 1 + offset, body.y + body.h / 2, cx - 3 + offset, body.y + body.h - 3, kInk);
-    }
-    line(fb, cx + 2, body.y + 3, cx - 2, body.y + body.h / 2, kPaper);
-    line(fb, cx - 2, body.y + body.h / 2, cx + 1, body.y + body.h / 2, kPaper);
-    line(fb, cx + 1, body.y + body.h / 2, cx - 3, body.y + body.h - 3, kPaper);
+  if (model.charging) {
+    // Small static corner bolt with a one-pixel paper halo. It never moves
+    // and its measured 7 px reservation cannot obscure even the "100%" label.
+    const Rect& mark = geometry.chargingMark;
+    const int cx = mark.x + mark.w / 2;
+    const int top = mark.y + 1;
+    const int middle = mark.y + mark.h / 2;
+    const int bottom = mark.y + mark.h - 1;
+    line(fb, cx + 2, top, cx - 1, middle, kPaper);
+    line(fb, cx - 1, middle, cx + 1, middle, kPaper);
+    line(fb, cx + 1, middle, cx - 2, bottom, kPaper);
+    line(fb, cx + 1, top, cx - 1, middle, kInk);
+    line(fb, cx - 1, middle, cx + 1, middle, kInk);
+    line(fb, cx + 1, middle, cx - 1, bottom, kInk);
   }
 }
 
@@ -306,7 +357,7 @@ void circle(uint8_t* fb, int cx, int cy, int radius, uint8_t color) {
 
 void wifiIcon(uint8_t* fb, Rect bounds, network::State state,
               bool rssiAvailable, int16_t rssi, uint8_t color) {
-  epd_fill_rect({bounds.x,bounds.y,bounds.w,bounds.h},kPaper,fb);
+  blankRegion(fb, bounds);
   constexpr int kBarCount=4,kBarWidth=4,kBarGap=3;
   const int totalWidth=kBarCount*kBarWidth+(kBarCount-1)*kBarGap;
   constexpr int kTallestBarHeight=22;
@@ -350,11 +401,11 @@ void appBar(uint8_t* fb, const UiSnapshot& state, const char* section) {
                 "shared header baseline must remain inside the single row");
   // Clear every independently clipped region before drawing it. The rest of the
   // app bar is already white from full-frame composition; no dark header band is used.
-  epd_fill_rect({brandClip.x,brandClip.y,brandClip.w,brandClip.h},kPaper,fb);
-  epd_fill_rect({clockClip.x,clockClip.y,clockClip.w,clockClip.h},kPaper,fb);
-  epd_fill_rect({dateClip.x,dateClip.y,dateClip.w,dateClip.h},kPaper,fb);
-  epd_fill_rect({wifiClip.x,wifiClip.y,wifiClip.w,wifiClip.h},kPaper,fb);
-  epd_fill_rect({batteryClip.x,batteryClip.y,batteryClip.w,batteryClip.h},kPaper,fb);
+  blankRegion(fb, brandClip);
+  blankRegion(fb, clockClip);
+  blankRegion(fb, dateClip);
+  blankRegion(fb, wifiClip);
+  blankRegion(fb, batteryClip);
   text(fb,brandClip,brandClip.x,spec::kHeaderBaseline,
        "supportFORGE",FontRole::CardHeading,kInk);
   // Page titles and product metadata belong to content rather than consuming
@@ -384,22 +435,23 @@ void appBar(uint8_t* fb, const UiSnapshot& state, const char* section) {
   const int dateX=dateClip.x+(dateClip.w-textWidth(date,FontRole::Caption))/2;
   text(fb,dateClip,max(dateClip.x,dateX),spec::kHeaderBaseline,
        date,FontRole::Caption,kInk);
-  wifiIcon(fb,wifiClip,state.wifi.state,state.wifi.rssiAvailable,state.wifi.rssi,kInk);
-  // Keep state text separate from the compact far-right icon. LKG identifies a
-  // retained validated SOC; ERR/-- never masquerade as a percentage.
-  const Rect batteryGlyph{batteryClip.x+56,spec::kHeaderBaseline-25,80,32};
-  batteryIcon(fb,batteryGlyph,state.batteryState,state.batteryPercentAvailable,
-              state.batteryPercent,kInk);
-  String batteryStateLabel;
-  if(state.batteryState==battery::State::Full)batteryStateLabel="FULL";
-  else if(state.batteryState==battery::State::Verifying)batteryStateLabel="VERIFY";
-  else if(state.batteryState==battery::State::Stale)batteryStateLabel="LKG";
-  else if(state.batteryState==battery::State::Error)batteryStateLabel="ERR";
-  if(batteryStateLabel.length()){
-    const Rect stateClip{batteryClip.x,batteryClip.y,52,batteryClip.h};
-    text(fb,stateClip,stateClip.x,spec::kHeaderBaseline,
-         batteryStateLabel,FontRole::Caption,kInk);
-  }
+  // Bias the compact signal bars toward the battery while retaining the complete
+  // Wi-Fi cell as their transition clear region.
+  const Rect wifiGlyph{wifiClip.x + 4, wifiClip.y, wifiClip.w, wifiClip.h};
+  wifiIcon(fb,wifiGlyph,state.wifi.state,state.wifi.rssiAvailable,state.wifi.rssi,kInk);
+  // Caption metrics measure 100% at 41x19 px. The 64x25 phone-style glyph has
+  // a 52x19 interior and a 45 px label region while charging.
+  // Explicitly erase both retired extents and the new compact extent;
+  // diagnostic words remain on HOME/Details and can never resize this icon.
+  const Rect legacy120BatteryGlyph{batteryClip.x + 8, batteryClip.y + 10, 120, 32};
+  const Rect legacy96BatteryGlyph{batteryClip.x + 12,
+                                  batteryClip.y + (batteryClip.h - 28) / 2, 96, 28};
+  const Rect batteryGlyph{batteryClip.x + batteryClip.w - 72,
+                          batteryClip.y + (batteryClip.h - 25) / 2, 64, 25};
+  blankRegion(fb, legacy120BatteryGlyph);
+  blankRegion(fb, legacy96BatteryGlyph);
+  blankRegion(fb, batteryGlyph);
+  batteryIcon(fb, batteryGlyph, state.batteryVisual, kInk);
   // Erase the complete old-to-new divider band before placing the raised rule.
   // This remains correct if the app bar is ever redrawn from retained pixels.
   epd_fill_rect({0,kAppBarHeight-1,kCanvasWidth,9},kPaper,fb);

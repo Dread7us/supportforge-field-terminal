@@ -11,9 +11,10 @@ constexpr uint8_t kStateOfChargeRegister = 0x2C;
 // BQ27220 standard commands used by LILYGO's read-only gauge path and TI's
 // public command table. These are observations only, never control subcommands.
 constexpr uint8_t kVoltageRegister = 0x08;
-constexpr uint8_t kRemainingCapacityRegister = 0x0C;
+constexpr uint8_t kRemainingCapacityRegister = 0x10;
 constexpr uint8_t kFullChargeCapacityRegister = 0x12;
 constexpr uint8_t kAverageCurrentRegister = 0x14;
+constexpr uint8_t kDesignCapacityRegister = 0x3C;
 constexpr uint8_t kChargerStatusRegister = 0x0B;
 constexpr uint8_t kChargeStatusMask = 0x18;
 constexpr uint8_t kVbusStatusMask = 0xE0;
@@ -22,6 +23,35 @@ constexpr uint32_t kChargingSampleIntervalMs = 45UL * 1000UL;
 constexpr uint32_t kRecoverySampleIntervalMs = 5UL * 1000UL;
 constexpr uint8_t kFailuresBeforeError = 3;
 constexpr uint32_t kMaximumFreshAgeMs = maximumFreshAgeMs();
+constexpr uint16_t kFullVoltageEvidenceMv = 4150;
+constexpr int16_t kFullCurrentEvidenceMa = 100;
+constexpr uint8_t kCapacityAgreementTolerancePercent = 3;
+constexpr uint8_t kEvidenceSampleCount = 3;
+constexpr uint16_t kVoltageSampleToleranceMv = 30;
+constexpr uint16_t kCurrentSampleToleranceMa = 150;
+constexpr uint16_t kCapacitySampleToleranceMah = 3;
+// LILYGO specifies the T5-4.7 E-Paper S3 Pro pack as 3.7 V / 1500 mAh, and
+// its official H752-01 BQ27220 data-memory image sets Full Charge Capacity and
+// Design Capacity to 1500 mAh. Larger observations contradict that model; they
+// do not prove that the physical pack has a larger capacity.
+constexpr uint16_t kDocumentedPackCapacityMah = 1500;
+
+struct EvidenceFrame {
+  uint16_t soc = 0;
+  uint16_t voltage = 0;
+  uint16_t remainingCapacity = 0;
+  uint16_t fullChargeCapacity = 0;
+  uint16_t designCapacity = 0;
+  int16_t averageCurrent = 0;
+  uint8_t chargerStatus = 0;
+  bool socValid = false;
+  bool voltageValid = false;
+  bool remainingValid = false;
+  bool fullCapacityValid = false;
+  bool designCapacityValid = false;
+  bool currentValid = false;
+  bool chargerValid = false;
+};
 
 bool readRegister(uint8_t address, uint8_t reg, uint8_t* data, size_t length) {
   Wire.beginTransmission(address);
@@ -35,28 +65,6 @@ bool readRegister(uint8_t address, uint8_t reg, uint8_t* data, size_t length) {
   return true;
 }
 
-bool readSoc(uint16_t& value) {
-  uint8_t first[2]{}, second[2]{}, third[2]{};
-  if (!readRegister(kGaugeAddress, kStateOfChargeRegister, first, sizeof(first)) ||
-      !readRegister(kGaugeAddress, kStateOfChargeRegister, second, sizeof(second))) return false;
-  const uint16_t firstValue = decodeLittleEndianWord(first[0], first[1]);
-  const uint16_t secondValue = decodeLittleEndianWord(second[0], second[1]);
-  if (!validPercent(firstValue) || !validPercent(secondValue)) return false;
-  if (firstValue == secondValue) { value = secondValue; return true; }
-  // One bounded retry handles a legitimate one-percent transition or one noisy
-  // transaction without accepting an unvalidated word.
-  if (!readRegister(kGaugeAddress, kStateOfChargeRegister, third, sizeof(third))) return false;
-  const uint16_t thirdValue = decodeLittleEndianWord(third[0], third[1]);
-  if (!validPercent(thirdValue)) return false;
-  if (thirdValue == secondValue || thirdValue == firstValue) { value = thirdValue; return true; }
-  if (abs(static_cast<int>(thirdValue) - static_cast<int>(secondValue)) <= 1 &&
-      abs(static_cast<int>(secondValue) - static_cast<int>(firstValue)) <= 1) {
-    value = thirdValue;
-    return true;
-  }
-  return false;
-}
-
 bool readGaugeWord(uint8_t command, uint16_t& value) {
   uint8_t data[2]{};
   if (!readRegister(kGaugeAddress, command, data, sizeof(data))) return false;
@@ -65,8 +73,45 @@ bool readGaugeWord(uint8_t command, uint16_t& value) {
 }
 
 bool readChargerStatus(uint8_t& value) {
-  return readRegister(kChargerAddress, kChargerStatusRegister, &value, 1) ||
-         readRegister(kChargerAddress, kChargerStatusRegister, &value, 1);
+  return readRegister(kChargerAddress, kChargerStatusRegister, &value, 1);
+}
+
+uint16_t spread(uint16_t a, uint16_t b, uint16_t c) {
+  return max(a, max(b, c)) - min(a, min(b, c));
+}
+
+uint16_t median(uint16_t a, uint16_t b, uint16_t c) {
+  return a + b + c - min(a, min(b, c)) - max(a, max(b, c));
+}
+
+bool stableWords(const EvidenceFrame (&frames)[kEvidenceSampleCount],
+                 uint16_t EvidenceFrame::*field, bool EvidenceFrame::*valid,
+                 uint16_t tolerance, uint16_t& value) {
+  if (!(frames[0].*valid) || !(frames[1].*valid) || !(frames[2].*valid)) return false;
+  const uint16_t a = frames[0].*field, b = frames[1].*field, c = frames[2].*field;
+  if (spread(a, b, c) > tolerance) return false;
+  value = median(a, b, c);
+  return true;
+}
+
+bool stableCurrent(const EvidenceFrame (&frames)[kEvidenceSampleCount], int16_t& value) {
+  if (!frames[0].currentValid || !frames[1].currentValid || !frames[2].currentValid) return false;
+  const int16_t low = min(frames[0].averageCurrent,
+      min(frames[1].averageCurrent, frames[2].averageCurrent));
+  const int16_t high = max(frames[0].averageCurrent,
+      max(frames[1].averageCurrent, frames[2].averageCurrent));
+  if (static_cast<uint16_t>(high - low) > kCurrentSampleToleranceMa) return false;
+  value = static_cast<int16_t>(frames[0].averageCurrent + frames[1].averageCurrent +
+      frames[2].averageCurrent - low - high);
+  return true;
+}
+
+bool stableCharger(const EvidenceFrame (&frames)[kEvidenceSampleCount], uint8_t& value) {
+  if (!frames[0].chargerValid || !frames[1].chargerValid || !frames[2].chargerValid ||
+      frames[0].chargerStatus != frames[1].chargerStatus ||
+      frames[1].chargerStatus != frames[2].chargerStatus) return false;
+  value = frames[2].chargerStatus;
+  return true;
 }
 }
 
@@ -124,23 +169,43 @@ const char* chargePhaseName(ChargePhase value) {
   return "UNVERIFIED";
 }
 
+const char* displaySourceName(DisplaySource value) {
+  switch (value) {
+    case DisplaySource::GaugeSoc: return "GAUGE SOC";
+    case DisplaySource::CapacityRatio: return "CAPACITY RATIO";
+    case DisplaySource::Unavailable: return "UNAVAILABLE";
+  }
+  return "UNAVAILABLE";
+}
+
+const char* capacityFieldStatusName(CapacityFieldStatus value) {
+  switch (value) {
+    case CapacityFieldStatus::Available: return "AVAILABLE";
+    case CapacityFieldStatus::Unavailable: return "UNAVAILABLE";
+    case CapacityFieldStatus::Invalid: return "INVALID";
+  }
+  return "UNAVAILABLE";
+}
+
 const char* diagnosisName(Diagnosis value) {
   switch (value) {
     case Diagnosis::BatteryNearReportedSoc: return "GAUGE REPORTS BATTERY NEAR SHOWN SOC";
     case Diagnosis::ChargerNotContinuing: return "INPUT PRESENT; CHARGER NOT CONTINUING";
     case Diagnosis::GaugeStale: return "GAUGE SOC IS STALE OR INVALID";
-    case Diagnosis::ChargeCompleteBelowThreshold: return "CHARGE COMPLETE BELOW 95%; VERIFY GAUGE MODEL";
-    case Diagnosis::GaugeModelNeedsVerification: return "GAUGE MODEL / BATTERY NEEDS VERIFICATION";
+    case Diagnosis::GenuinePartialCharge: return "PARTIAL CHARGE CONFIRMED BY VOLTAGE / CAPACITY";
+    case Diagnosis::GaugeModelMismatch: return "GAUGE MODEL MISMATCH: VALID CAPACITY RATIO CONTRADICTS SOC";
+    case Diagnosis::CapacityDataUnavailable: return "CAPACITY DATA UNAVAILABLE";
+    case Diagnosis::CapacityModelInvalid: return "BATTERY GAUGE CAPACITY MODEL INVALID";
     case Diagnosis::None: return "NO CONTRADICTION OBSERVED";
   }
   return "NO CONTRADICTION OBSERVED";
 }
 
-State reconcileStateOfCharge(State chargerState, bool socFresh, uint8_t percent) {
+State reconcileStateOfCharge(State chargerState, bool fullEvidence, uint8_t percent) {
   if (chargerState != State::Full) return chargerState;
-  // Charge termination is necessary but not sufficient for FULL. Only a fresh,
-  // independently validated gauge SOC at the near-full threshold can confirm it.
-  return socFresh && validPercent(percent) && percent >= nearFullThresholdPercent()
+  // The charger's termination bit is necessary but insufficient. FULL requires
+  // one fresh, corroborated evidence batch and an authoritative 100% source.
+  return fullEvidence && percent == 100
              ? State::Full
              : State::Verifying;
 }
@@ -168,6 +233,10 @@ void BatteryManager::poll(uint32_t nowMs, bool gaugeObserved, bool chargerObserv
   if (snapshot_.percentAvailable && snapshot_.hasValidSample &&
       nowMs - snapshot_.lastSampleMs > kMaximumFreshAgeMs) {
     snapshot_.percentAvailable = false;
+    snapshot_.displaySource = DisplaySource::Unavailable;
+    snapshot_.rawSocAvailable = false;
+    snapshot_.capacityRatioAvailable = false;
+    snapshot_.fullEvidence = false;
     snapshot_.sampleValid = false;
     snapshot_.state = State::Stale;
     snapshot_.diagnosis = Diagnosis::GaugeStale;
@@ -180,20 +249,41 @@ void BatteryManager::poll(uint32_t nowMs, bool gaugeObserved, bool chargerObserv
 
 void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObserved) {
   const Snapshot before = snapshot_;
-  const bool retainedPercentFresh = before.percentAvailable && before.hasValidSample &&
-      nowMs - before.lastSampleMs <= kMaximumFreshAgeMs;
   snapshot_.sampleAttempted = true;
   snapshot_.lastAttemptMs = nowMs;
-  uint16_t soc = 0;
-  uint16_t voltage = 0, averageCurrent = 0, remainingCapacity = 0, fullChargeCapacity = 0;
+  EvidenceFrame frames[kEvidenceSampleCount]{};
+  for (uint8_t index = 0; index < kEvidenceSampleCount; ++index) {
+    EvidenceFrame& frame = frames[index];
+    frame.socValid = gaugeObserved && readGaugeWord(kStateOfChargeRegister, frame.soc) &&
+        validPercent(frame.soc);
+    frame.remainingValid = gaugeObserved &&
+        readGaugeWord(kRemainingCapacityRegister, frame.remainingCapacity);
+    frame.fullCapacityValid = gaugeObserved &&
+        readGaugeWord(kFullChargeCapacityRegister, frame.fullChargeCapacity);
+    frame.designCapacityValid = gaugeObserved &&
+        readGaugeWord(kDesignCapacityRegister, frame.designCapacity);
+    frame.voltageValid = gaugeObserved && readGaugeWord(kVoltageRegister, frame.voltage);
+    uint16_t currentWord = 0;
+    frame.currentValid = gaugeObserved && readGaugeWord(kAverageCurrentRegister, currentWord);
+    frame.averageCurrent = static_cast<int16_t>(currentWord);
+    frame.chargerValid = chargerObserved && readChargerStatus(frame.chargerStatus);
+  }
+  uint16_t soc = 0, voltage = 0, remainingCapacity = 0, fullChargeCapacity = 0,
+      designCapacity = 0;
+  int16_t averageCurrent = 0;
   uint8_t chargerStatus = 0;
-  const bool socValid = gaugeObserved && readSoc(soc);
-  const bool voltageValid = gaugeObserved && readGaugeWord(kVoltageRegister, voltage);
-  const bool currentValid = gaugeObserved && readGaugeWord(kAverageCurrentRegister, averageCurrent);
-  const bool remainingValid = gaugeObserved && readGaugeWord(kRemainingCapacityRegister, remainingCapacity);
-  const bool fullCapacityValid = gaugeObserved && readGaugeWord(kFullChargeCapacityRegister, fullChargeCapacity) &&
-      fullChargeCapacity > 0;
-  const bool chargerValid = chargerObserved && readChargerStatus(chargerStatus);
+  const bool socValid = stableWords(frames, &EvidenceFrame::soc, &EvidenceFrame::socValid, 1, soc) &&
+      validPercent(soc);
+  const bool voltageValid = stableWords(frames, &EvidenceFrame::voltage,
+      &EvidenceFrame::voltageValid, kVoltageSampleToleranceMv, voltage);
+  const bool currentValid = stableCurrent(frames, averageCurrent);
+  const bool remainingValid = stableWords(frames, &EvidenceFrame::remainingCapacity,
+      &EvidenceFrame::remainingValid, kCapacitySampleToleranceMah, remainingCapacity);
+  const bool fullCapacityValid = stableWords(frames, &EvidenceFrame::fullChargeCapacity,
+      &EvidenceFrame::fullCapacityValid, kCapacitySampleToleranceMah, fullChargeCapacity);
+  const bool designCapacityValid = stableWords(frames, &EvidenceFrame::designCapacity,
+      &EvidenceFrame::designCapacityValid, kCapacitySampleToleranceMah, designCapacity);
+  const bool chargerValid = stableCharger(frames, chargerStatus);
   // SOC and charger status are independent read-only evidence. A failed charger
   // status read must never hide a valid gauge percentage or imply charging.
   snapshot_.sampleValid = socValid;
@@ -204,30 +294,74 @@ void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObse
   snapshot_.voltageAvailable = voltageValid;
   snapshot_.voltageMillivolts = voltageValid ? voltage : 0;
   snapshot_.currentAvailable = currentValid;
-  snapshot_.averageCurrentMilliamps = currentValid ? static_cast<int16_t>(averageCurrent) : 0;
-  snapshot_.capacityAvailable = remainingValid && fullCapacityValid;
-  snapshot_.remainingCapacityMah = snapshot_.capacityAvailable ? remainingCapacity : 0;
-  snapshot_.fullChargeCapacityMah = snapshot_.capacityAvailable ? fullChargeCapacity : 0;
+  snapshot_.averageCurrentMilliamps = currentValid ? averageCurrent : 0;
+  snapshot_.remainingCapacityStatus = !remainingValid ? CapacityFieldStatus::Unavailable :
+      (remainingCapacity > kDocumentedPackCapacityMah ? CapacityFieldStatus::Invalid :
+       CapacityFieldStatus::Available);
+  snapshot_.fullChargeCapacityStatus = !fullCapacityValid ? CapacityFieldStatus::Unavailable :
+      (fullChargeCapacity == 0 || fullChargeCapacity > kDocumentedPackCapacityMah
+          ? CapacityFieldStatus::Invalid : CapacityFieldStatus::Available);
+  snapshot_.designCapacityStatus = !designCapacityValid ? CapacityFieldStatus::Unavailable :
+      (designCapacity != kDocumentedPackCapacityMah
+          ? CapacityFieldStatus::Invalid : CapacityFieldStatus::Available);
+  if (snapshot_.remainingCapacityStatus == CapacityFieldStatus::Available &&
+      snapshot_.fullChargeCapacityStatus == CapacityFieldStatus::Available &&
+      remainingCapacity > fullChargeCapacity) {
+    snapshot_.remainingCapacityStatus = CapacityFieldStatus::Invalid;
+  }
+  snapshot_.capacityAvailable =
+      snapshot_.remainingCapacityStatus == CapacityFieldStatus::Available &&
+      snapshot_.fullChargeCapacityStatus == CapacityFieldStatus::Available &&
+      snapshot_.designCapacityStatus == CapacityFieldStatus::Available;
+  // Retain stable raw observations even when they are invalid so diagnostics
+  // can show the contradiction (for example 2386 / 3000 mAh) transparently.
+  snapshot_.remainingCapacityMah = remainingValid ? remainingCapacity : 0;
+  snapshot_.fullChargeCapacityMah = fullCapacityValid ? fullChargeCapacity : 0;
+  snapshot_.designCapacityMah = designCapacityValid ? designCapacity : 0;
+  snapshot_.rawSocAvailable = socValid;
+  snapshot_.rawSocPercent = socValid ? static_cast<uint8_t>(soc) : 0;
+  snapshot_.capacityRatioAvailable = snapshot_.capacityAvailable;
+  snapshot_.capacityRatioPercent = snapshot_.capacityAvailable
+      ? static_cast<uint8_t>((remainingCapacity * 100UL + fullChargeCapacity / 2) /
+            fullChargeCapacity) : 0;
+  const bool capacityAgrees = socValid && snapshot_.capacityRatioAvailable &&
+      abs(static_cast<int>(snapshot_.capacityRatioPercent) - static_cast<int>(soc)) <=
+          kCapacityAgreementTolerancePercent;
+  const bool terminatedAtFullVoltage = chargerValid &&
+      snapshot_.chargerConnection == ChargerConnection::Connected &&
+      snapshot_.chargePhase == ChargePhase::Complete && voltageValid &&
+      voltage >= kFullVoltageEvidenceMv && currentValid &&
+      abs(static_cast<int>(averageCurrent)) <= kFullCurrentEvidenceMa;
+  const bool capacityProvesFull = snapshot_.capacityRatioAvailable &&
+      snapshot_.capacityRatioPercent == 100 && terminatedAtFullVoltage;
+  // A 100% display always requires a valid 100% capacity ratio. Raw SOC remains
+  // authoritative when it agrees; only the contradictory 80/100-style case
+  // selects the ratio, and only with independent charger/voltage/current proof.
+  snapshot_.fullEvidence = socValid && capacityProvesFull;
   if (socValid) {
     consecutiveSocFailures_ = 0;
     snapshot_.percentAvailable = true;
     snapshot_.hasValidSample = true;
     snapshot_.percent = static_cast<uint8_t>(soc);
+    snapshot_.displaySource = DisplaySource::GaugeSoc;
     snapshot_.lastSampleMs = nowMs;
+  }
+  if (socValid && !capacityAgrees && capacityProvesFull) {
+    snapshot_.percent = snapshot_.capacityRatioPercent;
+    snapshot_.displaySource = DisplaySource::CapacityRatio;
   }
   const State rawChargeState = chargerValid ? classifyChargeStatus(chargerStatus) : State::Unknown;
   const State verifiedChargeState = reconcileStateOfCharge(
-      rawChargeState, socValid, static_cast<uint8_t>(soc));
+      rawChargeState, snapshot_.fullEvidence, snapshot_.percent);
   if (chargerValid && (verifiedChargeState == State::Charging || verifiedChargeState == State::Full)) {
-    // Charger evidence is independent of gauge evidence. Preserve a fresh LKG
-    // percentage when available, but never hide verified charging/full merely
-    // because the separate SOC transaction failed.
-    snapshot_.percentAvailable = socValid || retainedPercentFresh;
+    // Charger evidence is independent, but the displayed source must still be
+    // part of this same fresh validated evidence batch.
+    snapshot_.percentAvailable = socValid;
     snapshot_.state = verifiedChargeState;
   } else if (chargerValid && verifiedChargeState == State::Verifying) {
     // Termination with low, stale, or unavailable SOC is contradictory evidence.
-    // Preserve a bounded LKG percentage only as data; never promote it to FULL.
-    snapshot_.percentAvailable = socValid || retainedPercentFresh;
+    // Never retain stale percentage data or promote incomplete evidence to FULL.
+    snapshot_.percentAvailable = socValid;
     snapshot_.state = State::Verifying;
   } else if (!gaugeObserved) {
     consecutiveSocFailures_ = 0;
@@ -235,27 +369,32 @@ void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObse
     snapshot_.percentAvailable = false;
   } else if (!socValid) {
     // A malformed or failed transaction is never accepted as a new sample.
-    // Keep a previously validated SOC visible only while that older sample is
-    // still inside the freshness bound; sampleValid remains false so the detail
-    // page and qualification output truthfully identify the failed attempt.
+    // A failed fresh evidence batch cannot retain an authoritative percentage.
     if (consecutiveSocFailures_ < UINT8_MAX) ++consecutiveSocFailures_;
-    snapshot_.percentAvailable = retainedPercentFresh;
-    snapshot_.state = retainedPercentFresh ? State::Stale :
-        (consecutiveSocFailures_ >= kFailuresBeforeError ? State::Error : State::Unknown);
+    snapshot_.percentAvailable = false;
+    snapshot_.displaySource = DisplaySource::Unavailable;
+    snapshot_.state = consecutiveSocFailures_ >= kFailuresBeforeError ? State::Error : State::Stale;
   } else {
     snapshot_.state = chargerValid ? verifiedChargeState : State::Available;
   }
-  if (!socValid && !retainedPercentFresh) snapshot_.diagnosis = Diagnosis::GaugeStale;
-  else if (snapshot_.chargePhase == ChargePhase::Complete &&
-           snapshot_.percentAvailable && snapshot_.percent < nearFullThresholdPercent())
-    snapshot_.diagnosis = Diagnosis::ChargeCompleteBelowThreshold;
+  const bool capacityModelInvalid =
+      snapshot_.remainingCapacityStatus == CapacityFieldStatus::Invalid ||
+      snapshot_.fullChargeCapacityStatus == CapacityFieldStatus::Invalid ||
+      snapshot_.designCapacityStatus == CapacityFieldStatus::Invalid;
+  if (!socValid) snapshot_.diagnosis = Diagnosis::GaugeStale;
+  else if (capacityModelInvalid)
+    snapshot_.diagnosis = Diagnosis::CapacityModelInvalid;
+  else if (!snapshot_.capacityAvailable)
+    snapshot_.diagnosis = Diagnosis::CapacityDataUnavailable;
+  else if (snapshot_.capacityRatioAvailable && !capacityAgrees)
+    snapshot_.diagnosis = Diagnosis::GaugeModelMismatch;
   else if (snapshot_.chargerConnection == ChargerConnection::Connected &&
            snapshot_.chargePhase == ChargePhase::NotCharging &&
            snapshot_.percentAvailable && snapshot_.percent < nearFullThresholdPercent())
     snapshot_.diagnosis = Diagnosis::ChargerNotContinuing;
-  else if (snapshot_.capacityAvailable && snapshot_.fullChargeCapacityMah &&
-           snapshot_.remainingCapacityMah * 100UL / snapshot_.fullChargeCapacityMah + 10 < snapshot_.percent)
-    snapshot_.diagnosis = Diagnosis::GaugeModelNeedsVerification;
+  else if (socValid && capacityAgrees && soc < nearFullThresholdPercent() &&
+           !terminatedAtFullVoltage)
+    snapshot_.diagnosis = Diagnosis::GenuinePartialCharge;
   else if (snapshot_.percentAvailable && snapshot_.percent < nearFullThresholdPercent())
     snapshot_.diagnosis = Diagnosis::BatteryNearReportedSoc;
   else snapshot_.diagnosis = Diagnosis::None;
@@ -263,8 +402,14 @@ void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObse
   nextSampleMs_ = nowMs + (recoveringSoc ? kRecoverySampleIntervalMs :
       (snapshot_.state == State::Charging ? kChargingSampleIntervalMs : kNormalSampleIntervalMs));
   if (before.state != snapshot_.state ||
-      before.percentAvailable != snapshot_.percentAvailable ||
+       before.percentAvailable != snapshot_.percentAvailable ||
       (snapshot_.percentAvailable && before.percent != snapshot_.percent) ||
+       before.displaySource != snapshot_.displaySource ||
+       before.rawSocAvailable != snapshot_.rawSocAvailable ||
+       (snapshot_.rawSocAvailable && before.rawSocPercent != snapshot_.rawSocPercent) ||
+       before.capacityRatioAvailable != snapshot_.capacityRatioAvailable ||
+       (snapshot_.capacityRatioAvailable && before.capacityRatioPercent != snapshot_.capacityRatioPercent) ||
+       before.fullEvidence != snapshot_.fullEvidence ||
       before.sampleValid != snapshot_.sampleValid ||
       before.chargeStatusVerified != snapshot_.chargeStatusVerified ||
       before.chargerConnection != snapshot_.chargerConnection ||
@@ -273,17 +418,40 @@ void BatteryManager::sample(uint32_t nowMs, bool gaugeObserved, bool chargerObse
       (snapshot_.voltageAvailable && before.voltageMillivolts != snapshot_.voltageMillivolts) ||
       before.currentAvailable != snapshot_.currentAvailable ||
       (snapshot_.currentAvailable && before.averageCurrentMilliamps != snapshot_.averageCurrentMilliamps) ||
+      before.remainingCapacityStatus != snapshot_.remainingCapacityStatus ||
+      before.fullChargeCapacityStatus != snapshot_.fullChargeCapacityStatus ||
+      before.designCapacityStatus != snapshot_.designCapacityStatus ||
       before.capacityAvailable != snapshot_.capacityAvailable ||
-      (snapshot_.capacityAvailable && (before.remainingCapacityMah != snapshot_.remainingCapacityMah ||
-       before.fullChargeCapacityMah != snapshot_.fullChargeCapacityMah))) ++snapshot_.version;
-  // Diagnostics expose only bounded state names and validity flags. Raw charger
-  // words, SOC values, device secrets, and user data are never emitted.
-  Serial.printf("BATTERY read=%s soc_valid=%s charge_status_verified=%s charger_state=%s state=%s freshness=%s\n",
+      before.remainingCapacityMah != snapshot_.remainingCapacityMah ||
+      before.fullChargeCapacityMah != snapshot_.fullChargeCapacityMah ||
+      before.designCapacityMah != snapshot_.designCapacityMah) ++snapshot_.version;
+  // One bounded read-only evidence record contains only authorized battery and
+  // charger observations. It never emits raw charger words or unrelated data.
+  const String rawSocText = snapshot_.rawSocAvailable ? String(snapshot_.rawSocPercent) : "--";
+  const String displayedText = snapshot_.percentAvailable ? String(snapshot_.percent) : "--";
+  const String ratioText = snapshot_.capacityRatioAvailable
+      ? String(snapshot_.capacityRatioPercent) : "--";
+  const String remainingText = snapshot_.remainingCapacityStatus != CapacityFieldStatus::Unavailable
+      ? String(snapshot_.remainingCapacityMah) : "--";
+  const String fullText = snapshot_.fullChargeCapacityStatus != CapacityFieldStatus::Unavailable
+      ? String(snapshot_.fullChargeCapacityMah) : "--";
+  const String designText = snapshot_.designCapacityStatus != CapacityFieldStatus::Unavailable
+      ? String(snapshot_.designCapacityMah) : "--";
+  const String voltageText = snapshot_.voltageAvailable ? String(snapshot_.voltageMillivolts) : "--";
+  const String currentText = snapshot_.currentAvailable
+      ? String(snapshot_.averageCurrentMilliamps) : "--";
+  Serial.printf("BATTERY read=%s samples=%u raw_soc=%s displayed=%s source=%s ratio=%s remaining=%s full=%s design=%s documented_pack=%u voltage=%s current=%s input=%s phase=%s freshness=%s diagnosis=\"%s\"\n",
                 snapshot_.sampleValid ? "SUCCESS" : "FAILURE",
-                socValid ? "YES" : "NO",
-                chargerValid ? "YES" : "NO", stateName(rawChargeState),
-                stateName(snapshot_.state),
-                snapshot_.percentAvailable ? (socValid ? "FRESH" : "LKG") : "UNAVAILABLE");
+                 static_cast<unsigned>(kEvidenceSampleCount),
+                 rawSocText.c_str(), displayedText.c_str(),
+                 displaySourceName(snapshot_.displaySource),
+                 ratioText.c_str(), remainingText.c_str(), fullText.c_str(),
+                 designText.c_str(), static_cast<unsigned>(kDocumentedPackCapacityMah),
+                 voltageText.c_str(), currentText.c_str(),
+                 chargerConnectionName(snapshot_.chargerConnection),
+                 chargePhaseName(snapshot_.chargePhase),
+                snapshot_.percentAvailable ? (socValid ? "FRESH" : "LKG") : "UNAVAILABLE",
+                 diagnosisName(snapshot_.diagnosis));
 }
 
 }  // namespace battery

@@ -40,18 +40,14 @@ class UiContractTests(unittest.TestCase):
  def test_header_is_white_clipped_aligned_and_brand_drawn_once(self):
   app=COMPONENTS[COMPONENTS.index('void appBar('):COMPONENTS.index('void card(')]
   self.assertEqual(app.count('"supportFORGE"'),1)
-  self.assertEqual(app.count('epd_fill_rect({brandClip.x'),1)
-  self.assertEqual(app.count('epd_fill_rect({clockClip.x'),1)
-  self.assertEqual(app.count('epd_fill_rect({dateClip.x'),1)
-  self.assertEqual(app.count('epd_fill_rect({wifiClip.x'),1)
-  self.assertEqual(app.count('epd_fill_rect({batteryClip.x'),1)
-  self.assertEqual(app.count(',kPaper,fb);'),6)
+  for region in ('brandClip','clockClip','dateClip','wifiClip','batteryClip'):
+   self.assertEqual(app.count(f'blankRegion(fb, {region})'),1)
   self.assertNotIn('kInk,fb);\n  const Rect brandClip',app)
   for token in ('brandClip,brandClip.x,spec::kHeaderBaseline',
                 'clockClip,max(clockClip.x,clockX),spec::kHeaderBaseline',
-                'dateClip,max(dateClip.x,dateX),spec::kHeaderBaseline',
-                'stateClip,stateClip.x,spec::kHeaderBaseline'):
+                'dateClip,max(dateClip.x,dateX),spec::kHeaderBaseline'):
    self.assertIn(token,app)
+  self.assertNotIn('stateClip',app)
   self.assertEqual(app.count('centeredBaseline('),0)
   self.assertNotIn('subtitle',app.lower())
   self.assertNotIn('"FIELD TERMINAL"',app)
@@ -66,33 +62,44 @@ class UiContractTests(unittest.TestCase):
   brand=METRICS['roles']['CardHeading']; brand_width=width('supportFORGE','CardHeading')
   self.assertLessEqual(brand_width,SPEC['geometry']['header_brand_bounds'][2])
   self.assertLessEqual(brand['line_height'],SPEC['geometry']['header_brand_bounds'][3])
-  self.assertIn('batteryClip.x+56,spec::kHeaderBaseline-25,80,32',app)
-  self.assertIn('batteryStateLabel="FULL"',app)
-  self.assertIn('batteryStateLabel="VERIFY"',app)
-  self.assertIn('batteryStateLabel="LKG"',app)
-  self.assertIn('batteryStateLabel="ERR"',app)
+  self.assertIn('const Rect legacy120BatteryGlyph{batteryClip.x + 8, batteryClip.y + 10, 120, 32}',app)
+  self.assertIn('const Rect legacy96BatteryGlyph{batteryClip.x + 12',app)
+  self.assertIn('batteryClip.y + (batteryClip.h - 28) / 2, 96, 28',app)
+  self.assertIn('const Rect batteryGlyph{batteryClip.x + batteryClip.w - 72',app)
+  self.assertIn('batteryClip.y + (batteryClip.h - 25) / 2, 64, 25',app)
+  self.assertIn('blankRegion(fb, legacy120BatteryGlyph)',app)
+  self.assertIn('blankRegion(fb, legacy96BatteryGlyph)',app)
+  self.assertIn('blankRegion(fb, batteryGlyph)',app)
+  self.assertIn('batteryIcon(fb, batteryGlyph, state.batteryVisual, kInk)',app)
+  self.assertNotIn('batteryStateLabel',app)
+  for diagnostic in ('"FULL"','"VERIFY"','"LIVE"','"LKG"','"STALE"','"ERR"'):
+   self.assertNotIn(diagnostic,app)
  def test_header_unavailable_states_and_battery_fill_truthfulness(self):
   app=COMPONENTS[COMPONENTS.index('void appBar('):COMPONENTS.index('void card(')]
   battery_icon=COMPONENTS[COMPONENTS.index('void batteryIcon('):COMPONENTS.index('void circle(')]
   self.assertIn('String time = "--:--"',app); self.assertIn(':"TIME SYNC"',app)
-  self.assertIn('if (!percentAvailable || !battery::validPercent(percent))',battery_icon)
-  self.assertIn('min<uint8_t>(percent, 100)',battery_icon)
+  self.assertIn('if (!model.percentAvailable || !battery::validPercent(model.percent))',battery_icon)
+  self.assertIn('const uint8_t bounded = model.percent',battery_icon)
+  self.assertIn('batteryFillWidth(geometry, model)',battery_icon)
   self.assertIn('const String unknown = "--"',battery_icon)
   self.assertIn('const Rect filled',battery_icon); self.assertIn('const Rect unfilled',battery_icon)
   self.assertIn('label, FontRole::Caption, kPaper',battery_icon)
   self.assertIn('label, FontRole::Caption, kInk',battery_icon)
-  self.assertGreater(battery_icon.index('if (!percentAvailable'),battery_icon.index('epd_draw_rect'))
-  self.assertGreater(battery_icon.index('const Rect filled'),battery_icon.index('if (!percentAvailable'))
+  self.assertGreater(battery_icon.index('if (!model.percentAvailable'),battery_icon.index('epd_draw_rect'))
+  self.assertGreater(battery_icon.index('const Rect filled'),battery_icon.index('if (!model.percentAvailable'))
  def test_battery_percentage_text_fits_every_value_and_uses_split_contrast(self):
   advances=METRICS['roles']['Caption']['advances']; width=lambda s:sum(advances[ord(c)-32] for c in s)
-  # Compact header glyph is 80 px; body/interior subtract 5 and then 6.
-  interior_width=80-5-6
-  self.assertTrue(all(width(str(value)) <= interior_width for value in (0,9,10,87,99,100)))
-  self.assertLessEqual(width('--'),interior_width)
+  # Compact 64x25 glyph: 5 px cap, 1 px gap, 3 px body inset, 7 px corner mark.
+  interior_width=64-5-1-6
+  charging_label_width=interior_width-7
+  self.assertEqual((interior_width,charging_label_width),(52,45))
+  self.assertLess(64,96); self.assertLess(25,28)
+  self.assertTrue(all(width(f'{value}%') <= charging_label_width for value in (0,1,8,10,59,80,95,99,100)))
+  self.assertLessEqual(width('--'),charging_label_width)
   battery_icon=COMPONENTS[COMPONENTS.index('void batteryIcon('):COMPONENTS.index('void circle(')]
-  self.assertIn('text(fb, filled, labelX',battery_icon)
-  self.assertIn('text(fb, unfilled, labelX',battery_icon)
-  self.assertIn('state == battery::State::Charging',battery_icon)
+  self.assertIn('text(fb, filledLabel, labelX',battery_icon)
+  self.assertIn('text(fb, unfilledLabel, labelX',battery_icon)
+  self.assertIn('if (model.charging)',battery_icon)
   self.assertNotRegex(battery_icon.lower(),r'millis\(|delay\(|frame\s*\+\+')
  def test_wifi_header_vertical_geometry_and_visual_weight(self):
   g=SPEC['geometry']; wifi=g['header_wifi_bounds']
@@ -103,10 +110,16 @@ class UiContractTests(unittest.TestCase):
   self.assertIn('constexpr int kBarCount=4,kBarWidth=4,kBarGap=3',icon)
   self.assertIn('const int sharedCenterY=bounds.y+bounds.h/2',icon)
   self.assertIn('bottom=sharedCenterY+kTallestBarHeight/2',icon)
-  self.assertIn('epd_fill_rect({bounds.x,bounds.y,bounds.w,bounds.h},kPaper,fb)',icon)
+  self.assertIn('blankRegion(fb, bounds)',icon)
   self.assertIn('if(index<bars)epd_fill_rect',icon)
   self.assertIn('else epd_draw_rect',icon)
   self.assertNotRegex(icon,r'epd_draw_circle|epd_fill_circle|epd_draw_line|cos\(|sin\(')
+  app=COMPONENTS[COMPONENTS.index('void appBar('):COMPONENTS.index('void card(')]
+  self.assertIn('const Rect wifiGlyph{wifiClip.x + 4, wifiClip.y, wifiClip.w, wifiClip.h}',app)
+  wifi_right=wifi[0]+4+(25+(wifi[2]-25)//2)
+  battery_left=SPEC['geometry']['header_battery_bounds'][0]+SPEC['geometry']['header_battery_bounds'][2]-72
+  self.assertLess(wifi_right,battery_left)
+  self.assertLessEqual(battery_left+64,SPEC['canvas']['width'])
   home=SPEC['pages']['home']['cards']
   self.assertEqual(home[0],[24,80,492,330])
   self.assertEqual(home[-1],[278,620,238,178])
@@ -148,7 +161,7 @@ class UiContractTests(unittest.TestCase):
   self.assertIn('constexpr Rect kVehicleSpeedBounds{24, 136, 492, 186}',theme)
   self.assertIn('vehicle speed must remain the dominant metric region',theme)
   motion=PAGES[PAGES.index('void vehicleMotion('):PAGES.index('void altimeter(')]
-  clear='epd_fill_rect({kVehicleSpeedBounds.x,kVehicleSpeedBounds.y,kVehicleSpeedBounds.w,kVehicleSpeedBounds.h},kPaper,fb)'
+  clear='blankRegion(fb,kVehicleSpeedBounds)'
   draw='centeredText(fb,kVehicleSpeedBounds,speed,FontRole::VehicleSpeed,kInk)'
   self.assertIn(clear,motion); self.assertIn(draw,motion); self.assertLess(motion.index(clear),motion.index(draw))
   self.assertNotRegex(motion,r'kInkMuted|delay\(|millis\(|requestRender')
@@ -166,7 +179,7 @@ class UiContractTests(unittest.TestCase):
    self.assertLessEqual(width(value),bounds[2],value)
    self.assertLessEqual(metric['line_height'],bounds[3],value)
   alt=PAGES[PAGES.index('void altimeter('):PAGES.index('String lastTimeSync(')]
-  clear='epd_fill_rect({kAltimeterMetricBounds.x,kAltimeterMetricBounds.y,'
+  clear='blankRegion(fb,kAltimeterMetricBounds)'
   draw='centeredText(fb,kAltimeterMetricBounds,gpsElevationValue(s.location,false),'
   self.assertIn(clear,alt); self.assertIn(draw,alt); self.assertLess(alt.index(clear),alt.index(draw))
   for label in ('GPS-BASED ELEVATION','GPS FIXED','SATELLITES','HDOP QUALITY','FRESHNESS','BACK'):

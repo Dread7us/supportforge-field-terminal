@@ -60,7 +60,7 @@ class UiDesignSystemTests(unittest.TestCase):
     def test_every_titled_shared_action_clears_before_drawing(self):
         action = COMPONENTS[COMPONENTS.index("void actionButton("):
                             COMPONENTS.index("void text(")]
-        clear = "epd_fill_rect({bounds.x, bounds.y, bounds.w, bounds.h}, kPaper, fb)"
+        clear = "blankRegion(fb, bounds)"
         self.assertLess(action.index(clear), action.index("roundedRect(fb, bounds"))
         self.assertLess(action.index("roundedRect(fb, bounds"), action.index("icon(fb, glyph"))
         self.assertIn("actionButton(fb,kSystemsSectionAction", PAGES)
@@ -91,7 +91,7 @@ class UiDesignSystemTests(unittest.TestCase):
         self.assertIn("Icon::Location", PAGES)
         wifi = COMPONENTS[COMPONENTS.index("void wifiIcon("):
                           COMPONENTS.index("void appBar(")]
-        self.assertIn("epd_fill_rect({bounds.x,bounds.y,bounds.w,bounds.h},kPaper,fb)", wifi)
+        self.assertIn("blankRegion(fb, bounds)", wifi)
         self.assertIn("sharedCenterY=bounds.y+bounds.h/2", wifi)
         self.assertIn("bottom=sharedCenterY+kTallestBarHeight/2", wifi)
 
@@ -106,12 +106,14 @@ class UiDesignSystemTests(unittest.TestCase):
         self.assertNotIn("epd_fullclear", COMPONENTS + PAGES)
         self.assertNotIn("epd_hl_update_screen", COMPONENTS + PAGES)
 
-    def test_page_changes_use_physical_cleanup_then_one_content_gc16(self):
+    def test_page_changes_use_mode_guarded_cleanup_and_one_content_gc16(self):
         render = CONTROLLER[CONTROLLER.index("bool DisplayCoordinator::renderIfDirty"):
                             CONTROLLER.index("void DisplayCoordinator::printPerformance")]
         self.assertIn("const bool fullPageTransition = renderingPriority == RenderPriority::Navigation", render)
         self.assertIn("hasPresentedPage_ && lastPresentedPage_ != snapshot_.page", CONTROLLER)
-        self.assertIn("const bool cleanupThisRender = (bootRecovery && firstUsableFrame && !fullClearUsed_) ||", render)
+        self.assertIn("const bool cleanupThisRender = bootCleanup || faultRecoveryCleanup || modeNavigationCleanup", render)
+        self.assertIn("RefreshMode::BeautifulClean", render)
+        self.assertIn("RefreshMode::Balanced && balancedCleanupAvailable", render)
         self.assertEqual(render.count("epd_fullclear"), 1)
         self.assertEqual(render.count("epd_hl_update_screen"), 1)
         self.assertLess(render.index("epd_fullclear"), render.index("epd_hl_update_screen"))
@@ -121,9 +123,11 @@ class UiDesignSystemTests(unittest.TestCase):
     def test_ordinary_page_composition_starts_from_white_for_stale_pixel_safety(self):
         render = PAGES[PAGES.index("void renderPage("):]
         self.assertLess(render.index("clear(fb)"), render.index("switch(s.page)"))
-        for helper in ("void actionButton", "void appBar", "void metricTile"):
+        for helper in ("void actionButton", "void appBar"):
             block = COMPONENTS[COMPONENTS.index(helper):]
-            self.assertIn("epd_fill_rect", block[:2200], helper)
+            self.assertIn("blankRegion", block[:2200], helper)
+        blank = COMPONENTS[COMPONENTS.index("void blankRegion"):COMPONENTS.index("void roundedRect")]
+        self.assertIn("epd_fill_rect", blank)
 
 
 if __name__ == "__main__":

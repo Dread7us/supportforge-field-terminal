@@ -21,7 +21,19 @@ enum class FontRole : uint8_t {
   QualificationSemiboldAa, QualificationBoldMono
 };
 
+struct BatteryIconGeometry {
+  Rect bounds{};
+  Rect body{};
+  Rect interior{};
+  Rect label{};
+  Rect chargingMark{};
+  Rect terminal{};
+};
+
 void clear(uint8_t* fb);
+// Erase the complete maximum visual bounds of dynamic content before redraw.
+// Callers provide padded geometry that includes glyph overhang and prior values.
+void blankRegion(uint8_t* fb, Rect bounds);
 void roundedRect(uint8_t* fb, Rect rect, int radius, uint8_t fill, uint8_t stroke);
 void text(uint8_t* fb, Rect clip, int x, int baseline, const String& value,
           FontRole role = FontRole::Body, uint8_t color = kInk);
@@ -36,8 +48,10 @@ void selectableCard(uint8_t* fb, Rect bounds, const String& title,
                     const String& detail, const String& secondary,
                     bool selected, Icon glyph);
 void icon(uint8_t* fb, Icon value, int cx, int cy, int size, uint8_t color = kInk);
-void batteryIcon(uint8_t* fb, Rect bounds, battery::State state,
-                 bool percentAvailable, uint8_t percent, uint8_t color = kInk);
+BatteryIconGeometry batteryIconGeometry(Rect bounds, bool charging);
+int batteryFillWidth(const BatteryIconGeometry& geometry, const battery::BatteryVisualModel& model);
+void batteryIcon(uint8_t* fb, Rect bounds, const battery::BatteryVisualModel& model,
+                 uint8_t color = kInk);
 void wifiIcon(uint8_t* fb, Rect bounds, network::State state,
               bool rssiAvailable, int16_t rssi, uint8_t color = kInk);
 void circle(uint8_t* fb, int cx, int cy, int radius, uint8_t color = kInk);

@@ -4,6 +4,7 @@
 
 #include "telemetry/telemetry_model.h"
 #include "battery/battery_manager.h"
+#include "battery/battery_visual_model.h"
 #include "time/time_service.h"
 #include "weather/weather_manager.h"
 #include "weather/weather_wizard.h"
@@ -91,9 +92,12 @@ struct UiSnapshot {
   uint8_t touchSetupStep = 0;
   bool touchSetupReady = false;
   bool psramAvailable = false;
-  bool batteryPercentAvailable = false;
-  uint8_t batteryPercent = 0;
-  battery::State batteryState = battery::State::NotPresent;
+  battery::BatteryVisualModel batteryVisual{};
+  bool batteryRawSocAvailable = false;
+  uint8_t batteryRawSocPercent = 0;
+  bool batteryCapacityRatioAvailable = false;
+  uint8_t batteryCapacityRatioPercent = 0;
+  bool batteryFullEvidence = false;
   bool batterySampleAttempted = false;
   bool batterySampleValid = false;
   bool batteryChargeStatusVerified = false;
@@ -104,9 +108,13 @@ struct UiSnapshot {
   uint16_t batteryVoltageMillivolts = 0;
   bool batteryCurrentAvailable = false;
   int16_t batteryAverageCurrentMilliamps = 0;
+  battery::CapacityFieldStatus batteryRemainingCapacityStatus = battery::CapacityFieldStatus::Unavailable;
+  battery::CapacityFieldStatus batteryFullChargeCapacityStatus = battery::CapacityFieldStatus::Unavailable;
+  battery::CapacityFieldStatus batteryDesignCapacityStatus = battery::CapacityFieldStatus::Unavailable;
   bool batteryCapacityAvailable = false;
   uint16_t batteryRemainingCapacityMah = 0;
   uint16_t batteryFullChargeCapacityMah = 0;
+  uint16_t batteryDesignCapacityMah = 0;
   uint32_t batteryLastSampleMs = 0;
   uint32_t batteryLastAttemptMs = 0;
   device_time::SyncState timeSyncState = device_time::SyncState::Unsynchronized;

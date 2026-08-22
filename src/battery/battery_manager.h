@@ -10,15 +10,24 @@ enum class State : uint8_t { Available, Charging, Full, Verifying, Stale, Unknow
 
 enum class ChargerConnection : uint8_t { Unknown, NotConnected, Connected };
 enum class ChargePhase : uint8_t { Unknown, NotCharging, Precharge, FastCharge, Complete };
+enum class DisplaySource : uint8_t { Unavailable, GaugeSoc, CapacityRatio };
+enum class CapacityFieldStatus : uint8_t { Unavailable, Available, Invalid };
 enum class Diagnosis : uint8_t {
   None, BatteryNearReportedSoc, ChargerNotContinuing, GaugeStale,
-  ChargeCompleteBelowThreshold, GaugeModelNeedsVerification
+  GenuinePartialCharge, GaugeModelMismatch, CapacityDataUnavailable,
+  CapacityModelInvalid
 };
 
 struct Snapshot {
   State state = State::NotPresent;
   bool percentAvailable = false;
   uint8_t percent = 0;
+  DisplaySource displaySource = DisplaySource::Unavailable;
+  bool rawSocAvailable = false;
+  uint8_t rawSocPercent = 0;
+  bool capacityRatioAvailable = false;
+  uint8_t capacityRatioPercent = 0;
+  bool fullEvidence = false;
   bool sampleAttempted = false;
   bool sampleValid = false;
   bool chargeStatusVerified = false;
@@ -29,9 +38,13 @@ struct Snapshot {
   uint16_t voltageMillivolts = 0;
   bool currentAvailable = false;
   int16_t averageCurrentMilliamps = 0;
+  CapacityFieldStatus remainingCapacityStatus = CapacityFieldStatus::Unavailable;
+  CapacityFieldStatus fullChargeCapacityStatus = CapacityFieldStatus::Unavailable;
+  CapacityFieldStatus designCapacityStatus = CapacityFieldStatus::Unavailable;
   bool capacityAvailable = false;
   uint16_t remainingCapacityMah = 0;
   uint16_t fullChargeCapacityMah = 0;
+  uint16_t designCapacityMah = 0;
   bool hasValidSample = false;
   uint32_t lastSampleMs = 0;
   uint32_t lastAttemptMs = 0;
@@ -59,9 +72,11 @@ uint16_t decodeLittleEndianWord(uint8_t low, uint8_t high);
 State classifyChargeStatus(uint8_t register0b);
 ChargerConnection classifyChargerConnection(uint8_t register0b);
 ChargePhase classifyChargePhase(uint8_t register0b);
-State reconcileStateOfCharge(State chargerState, bool socFresh, uint8_t percent);
+State reconcileStateOfCharge(State chargerState, bool fullEvidence, uint8_t percent);
 const char* chargerConnectionName(ChargerConnection value);
 const char* chargePhaseName(ChargePhase value);
+const char* displaySourceName(DisplaySource value);
+const char* capacityFieldStatusName(CapacityFieldStatus value);
 const char* diagnosisName(Diagnosis value);
 constexpr uint8_t nearFullThresholdPercent() { return 95; }
 constexpr uint32_t maximumFreshAgeMs() { return 270UL * 1000UL; }

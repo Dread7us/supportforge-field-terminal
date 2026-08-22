@@ -16,11 +16,11 @@ const char* refreshModeName(RefreshMode mode) {
 
 const char* refreshModeSummary(RefreshMode mode) {
   switch (mode) {
-    case RefreshMode::QuickNavigation: return "CLEAN TRANSITIONS; MINIMAL IN-PAGE GC16";
-    case RefreshMode::Balanced: return "CLEAN TRANSITIONS; NORMAL GC16";
-    case RefreshMode::BeautifulClean: return "CLEAN TRANSITIONS; QUALITY PRIORITY";
+    case RefreshMode::QuickNavigation: return "FAST: FULL GC16; NO NAVIGATION CLEANUP";
+    case RefreshMode::Balanced: return "FULL GC16; BOUNDED LAYOUT CLEANUP";
+    case RefreshMode::BeautifulClean: return "FULL GC16; CLEAN EACH PAGE REPLACEMENT";
   }
-  return "CLEAN TRANSITIONS; NORMAL GC16";
+  return "FAST: FULL GC16; NO NAVIGATION CLEANUP";
 }
 
 const char* pageName(Page page) {
@@ -95,9 +95,17 @@ bool materiallyDifferent(const UiSnapshot& a, const UiSnapshot& b) {
       a.touchMappingVerified != b.touchMappingVerified ||
       a.touchSetupStep != b.touchSetupStep ||
       a.touchSetupReady != b.touchSetupReady ||
-      a.batteryPercentAvailable != b.batteryPercentAvailable ||
-      (a.batteryPercentAvailable && a.batteryPercent != b.batteryPercent) ||
-       a.batteryState != b.batteryState ||
+      a.batteryVisual.percentAvailable != b.batteryVisual.percentAvailable ||
+      (a.batteryVisual.percentAvailable && a.batteryVisual.percent != b.batteryVisual.percent) ||
+       a.batteryVisual.source != b.batteryVisual.source ||
+       a.batteryVisual.state != b.batteryVisual.state ||
+       a.batteryVisual.charging != b.batteryVisual.charging ||
+       a.batteryRawSocAvailable != b.batteryRawSocAvailable ||
+       (a.batteryRawSocAvailable && a.batteryRawSocPercent != b.batteryRawSocPercent) ||
+       a.batteryCapacityRatioAvailable != b.batteryCapacityRatioAvailable ||
+       (a.batteryCapacityRatioAvailable &&
+        a.batteryCapacityRatioPercent != b.batteryCapacityRatioPercent) ||
+       a.batteryFullEvidence != b.batteryFullEvidence ||
        a.batterySampleValid != b.batterySampleValid ||
        a.batteryChargeStatusVerified != b.batteryChargeStatusVerified ||
        a.batteryChargerConnection != b.batteryChargerConnection ||
@@ -107,9 +115,13 @@ bool materiallyDifferent(const UiSnapshot& a, const UiSnapshot& b) {
        (a.batteryVoltageAvailable && a.batteryVoltageMillivolts != b.batteryVoltageMillivolts) ||
        a.batteryCurrentAvailable != b.batteryCurrentAvailable ||
        (a.batteryCurrentAvailable && a.batteryAverageCurrentMilliamps != b.batteryAverageCurrentMilliamps) ||
+       a.batteryRemainingCapacityStatus != b.batteryRemainingCapacityStatus ||
+       a.batteryFullChargeCapacityStatus != b.batteryFullChargeCapacityStatus ||
+       a.batteryDesignCapacityStatus != b.batteryDesignCapacityStatus ||
        a.batteryCapacityAvailable != b.batteryCapacityAvailable ||
-       (a.batteryCapacityAvailable && (a.batteryRemainingCapacityMah != b.batteryRemainingCapacityMah ||
-        a.batteryFullChargeCapacityMah != b.batteryFullChargeCapacityMah)) ||
+       a.batteryRemainingCapacityMah != b.batteryRemainingCapacityMah ||
+       a.batteryFullChargeCapacityMah != b.batteryFullChargeCapacityMah ||
+       a.batteryDesignCapacityMah != b.batteryDesignCapacityMah ||
       a.weather.state != b.weather.state ||
        a.weather.source != b.weather.source ||
        a.weather.configured != b.weather.configured ||
